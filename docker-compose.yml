@@ -7,6 +7,7 @@ services:
       - "8899:8899"          # bind "127.0.0.1:8899:8899" if you front it with a proxy
     volumes:
       - ./data:/data         # config.json, auth.json, history-*.db live here
-                             # first run: sudo chown 1000:1000 data/
+                             # (image runs as root; no chown needed. To run
+                             #  unprivileged add: user: "1000:1000" + chown dir)
     restart: unless-stopped
     # charts/telemetry of LAN routers only — no special caps needed

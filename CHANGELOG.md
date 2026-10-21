@@ -1,6 +1,13 @@
 # Changelog
 
 ## 2026-10-22
+21. **Batch #40 — image runs as root inside the container** — Portainer-created
+    bind mounts are root-owned, so the uid-1000 image kept dying with
+    `unable to open database file` on live setups. `USER 1000` removed from
+    the Dockerfile (standard for home dashboards; unprivileged use stays
+    possible via `user: "1000:1000"` in compose + chown); startup error text
+    generalized; chown steps removed from README/compose docs. Verified on the
+    pushed image: config User = root.
 20. **Batch #39 — device-panel chart now live** — the per-device traffic chart
     (`#devChart`) was a one-time snapshot fetched when the panel opened (with
     coarse 60 s buckets), so it visibly froze while flows below it kept moving.

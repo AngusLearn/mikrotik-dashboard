@@ -14,7 +14,9 @@ COPY server.py .
 COPY static/ static/
 
 RUN useradd -r -u 1000 dash && mkdir -p /data && chown 1000:1000 /data
-USER 1000
+# Runs as root inside the container (standard for home dashboards): host bind
+# mounts created by Portainer/root stay writable without manual chown.
+# Prefer dropping privileges? keep `user: "1000:1000"` in compose and chown the folder.
 EXPOSE 8899
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
