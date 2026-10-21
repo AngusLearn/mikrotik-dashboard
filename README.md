@@ -82,6 +82,26 @@ so the browser needs no internet; vendor-name lookups (OUI) download once when
 the container has internet and are skipped gracefully offline. On a Pi, consider
 `interval_seconds: 30` and a modest `retention_hours` to keep SD-card writes low.
 
+## ⚠️ Persist your settings: `/data` must be a stable bind mount
+
+Everything the dashboard stores — the webUI login, router profiles, and all
+history — lives in the container's `/data`. Run **without** a `-v` mount (or
+with an *anonymous* volume) and every container recreate (Portainer
+"recreate", image updates) deletes the setup: you re-enter the webUI password
+and all router credentials. Always bind one fixed host folder:
+
+```bash
+mkdir -p /home/me/mtdash-data          # pick any path, then never change it
+# docker run:  -v /home/me/mtdash-data:/data
+# compose:     volumes: [ /home/me/mtdash-data:/data ]
+```
+
+Portainer users: prefer a **Stack** with the compose file; for a hand-built
+container use volume type **bind** with host path → `/data`. Verify after any
+recreate: `docker inspect -f '{{json .Mounts}}' mikrotik-dashboard` must list
+your host path mounted at `/data`. The folder grows `auth.json`, `config.json`
+and `history-*.db` — back it up and the entire setup restores on any host.
+
 ## WiFi / AP monitoring
 
 When the monitored device is an access point (or has WiFi enabled), the
