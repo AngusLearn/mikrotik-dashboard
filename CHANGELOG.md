@@ -1,6 +1,12 @@
 # Changelog
 
 ## 2026-10-22
+20. **Batch #39 — device-panel chart now live** — the per-device traffic chart
+    (`#devChart`) was a one-time snapshot fetched when the panel opened (with
+    coarse 60 s buckets), so it visibly froze while flows below it kept moving.
+    It now re-fetches every 5 s while open (bucket 30 s) and updates the chart
+    in place (`update('none')`); the refresh timer is cleared on close/Esc.
+    node --check on the extracted inline script; JS syntax OK.
 19. **Batch #38 — traffic chart now live-pace** — the WAN/stack chart reloaded
     only every 15 s while the map refreshed every 3 s, so it read as stale next
     to the moving map dashes. `loadWan` now runs on the same 3 s tick (data was
