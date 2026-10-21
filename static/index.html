@@ -655,7 +655,7 @@ document.querySelectorAll('th[data-sort]').forEach(th=>th.onclick=()=>{sortKey=t
 $('#search').oninput=()=>renderDevs({});
 
 // ---- device detail panel (docked beside the network map)
-let _devIP='', _devMac='';
+let _devIP='', _devMac='', _dcTimer=null;
 function markSel(){
   document.querySelectorAll('.tdev').forEach(g=>g.classList.toggle('sel',g.dataset.mac===_devMac));
   document.querySelectorAll('tr.dev').forEach(tr=>tr.classList.toggle('sel',tr.dataset.ip===_devIP));
@@ -663,6 +663,7 @@ function markSel(){
 function closeDev(){
   $('#dev-body').hidden=true; $('#dev-empty').hidden=false;
   _devIP=''; _devMac=''; _flIP='';
+  clearInterval(_dcTimer);
   markSel();
 }
 $('#dev-close').onclick=closeDev;
@@ -687,7 +688,7 @@ async function openDev(ip,mac){
    body:JSON.stringify({ip,action:d.blocked?'unblock':'block'})});poll();closeDev()};
  markSel();
  if(ip) openFlows(ip); else { _flIP=''; $('#f-list').innerHTML='<div class="sub">device has no IP</div>'; }
- const r=await fetch(`/api/history?range_min=60&bucket=60&mac=${encodeURIComponent(mac)}`);
+ const r=await fetch(`/api/history?range_min=60&bucket=30&mac=${encodeURIComponent(mac)}`);
  const s=(await r.json()).series;
  if(dlgChart)dlgChart.destroy();
  dlgChart=new Chart($('#devChart'),{type:'line',data:{datasets:[
@@ -697,6 +698,19 @@ async function openDev(ip,mac){
    backgroundColor:'rgba(210,153,34,.12)',fill:true,pointRadius:0,borderWidth:1.5,tension:.25}]},
   options:{animation:false,maintainAspectRatio:false,scales:{x:{type:'time',time:{displayFormats:{hour:'HH:mm',minute:'HH:mm'}}},
    y:{beginAtZero:true,ticks:{callback:v=>fmtBps(v)}}},parsing:false}});
+ // live refresh: chart used to be a snapshot taken at click time and never moved
+ clearInterval(_dcTimer);
+ _dcTimer=setInterval(refreshDevChart,5000);
+}
+async function refreshDevChart(){
+ if(!dlgChart||!_devMac)return;
+ try{
+  const r=await fetch(`/api/history?range_min=60&bucket=30&mac=${encodeURIComponent(_devMac)}`);
+  const s=(await r.json()).series;
+  dlgChart.data.datasets[0].data=s.map(x=>({x:x[0]*1000,y:x[1]}));
+  dlgChart.data.datasets[1].data=s.map(x=>({x:x[0]*1000,y:x[2]}));
+  dlgChart.update('none');
+ }catch(e){/* transient fetch/auth errors: next tick retries */}
 }
 
 // ---- live flows (who this device is talking to) inside the device dialog
