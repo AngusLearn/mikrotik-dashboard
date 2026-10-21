@@ -880,7 +880,7 @@ document.querySelectorAll('[data-arange]').forEach(b=>b.onclick=()=>{
 window.allowControl=false;
 poll();loadWan();loadPie();loadAnalytics();loadConns();
 setInterval(poll,3000);
-setInterval(loadWan,15000);
+setInterval(()=>loadWan(),3000);   // live pace: match the map's 3 s refresh
 setInterval(loadPie,60000);
 setInterval(loadAnalytics,30000);
 setInterval(loadConns,5000);
