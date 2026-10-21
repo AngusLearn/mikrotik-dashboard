@@ -31,3 +31,26 @@ jobs:
             anguslearn/mikrotik-dashboard:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Sync Docker Hub overview from README.md
+        env:
+          DOCKER_PUSH: '${{ secrets.DOCKER_PUSH }}'
+        run: |
+          set -euo pipefail
+          JWT=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"username":"anguslearn","password":"$DOCKER_PUSH"}' \
+            https://hub.docker.com/v2/users/login/ | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
+          JWT="$JWT" python3 - <<'PY'
+          import json, os, urllib.request
+          full = open("README.md").read()
+          payload = json.dumps({
+              "full_description": full,
+              "description": "Live MikroTik LAN traffic dashboard: router profiles, per-profile history, WiFi stations view.",
+          }).encode()
+          req = urllib.request.Request(
+              "https://hub.docker.com/v2/repositories/anguslearn/mikrotik-dashboard/",
+              data=payload, method="PATCH",
+              headers={"Authorization": "JWT " + os.environ["JWT"],
+                       "Content-Type": "application/json"})
+          print("hub description updated:", urllib.request.urlopen(req).status)
+          PY
