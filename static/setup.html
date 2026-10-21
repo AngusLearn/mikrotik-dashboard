@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup · MikroTik LAN Monitor</title>
+<style>
+:root{--bg:#0b0f14;--panel:#121821;--panel2:#0e141c;--border:#1e2936;--fg:#e6edf3;
+--muted:#8494a7;--accent:#4cc2ff;--red:#f85149;--radius:12px}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif}
+.box{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+padding:26px 28px;width:min(400px,92vw)}
+h1{font-size:16px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:16px}
+label{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;
+letter-spacing:.05em;margin:10px 0 4px}
+input[type=password]{width:100%;background:var(--panel2);border:1px solid var(--border);
+color:var(--fg);border-radius:8px;padding:9px 12px;font-size:14px}
+button{width:100%;margin-top:16px;background:var(--accent);color:#04121e;border:0;
+border-radius:8px;padding:9px 12px;font-size:14px;font-weight:600;cursor:pointer}
+button:disabled{opacity:.5}
+#err{color:#ffb4ab;font-size:12px;min-height:16px;margin:8px 0 0}
+.note{color:var(--muted);font-size:11px;margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+</style>
+</head>
+<body>
+<form class="box" id="f" autocomplete="off">
+  <h1>🧭 First-time setup</h1>
+  <div class="sub">Create the dashboard login account. It is stored on this machine
+  only, as a hash — and it cannot be recovered from the browser, only reset from
+  the server's console.</div>
+  <label for="pw">Password (min 8 chars)</label>
+  <input type="password" id="pw" minlength="8" required autofocus>
+  <label for="pw2">Repeat password</label>
+  <input type="password" id="pw2" minlength="8" required>
+  <button type="submit" id="go">Create account &amp; continue</button>
+  <div id="err"></div>
+  <div class="note">Forgot it later? Reset on the dashboard machine:<br>
+  <code>python server.py --passwd</code></div>
+</form>
+<script>
+const $=s=>document.querySelector(s);
+$('#f').onsubmit=async e=>{
+  e.preventDefault();
+  const a=$('#pw').value,b=$('#pw2').value;
+  const btn=$('#go');btn.disabled=true;$('#err').textContent='';
+  try{
+    const r=await fetch('/api/setup',{method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({password:a,confirm:b})});
+    const d=await r.json().catch(()=>({}));
+    if(r.ok&&d.ok){location.assign('/');return}
+    $('#err').textContent=d.error||('HTTP '+r.status);
+  }catch(err){$('#err').textContent='backend unreachable'}
+  btn.disabled=false;
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MikroTik LAN Monitor</title>
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/vendor/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+:root{
+  --bg:#0b0f14; --panel:#121821; --panel2:#0e141c; --border:#1e2936;
+  --fg:#e6edf3; --muted:#8494a7; --accent:#4cc2ff; --dl:#3fb950; --ul:#d29922;
+  --red:#f85149; --radius:12px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:14px/1.45 -apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif;padding:18px 22px 40px}
+h1{font-size:17px;margin:0;display:flex;align-items:center;gap:10px}
+h1 .dot{width:10px;height:10px;border-radius:50%;background:var(--red);transition:.3s}
+h1 .dot.on{background:var(--dl);box-shadow:0 0 8px var(--dl)}
+header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+.sub{color:var(--muted);font-size:12px}
+.grid{display:grid;gap:14px}
+.cards{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
+.card .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.card .v{font-size:22px;font-weight:650;margin-top:4px;font-variant-numeric:tabular-nums}
+.card .v small{font-size:12px;color:var(--muted);font-weight:400}
+.dl{color:var(--dl)} .ul{color:var(--ul)}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.panel h2{margin:0 0 12px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;
+  display:flex;justify-content:space-between;align-items:center}
+.row2{display:grid;grid-template-columns:2fr 1fr;gap:14px}
+@media(max-width:900px){.row2{grid-template-columns:1fr}}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,.btn{background:var(--panel2);color:var(--fg);border:1px solid var(--border);
+  border-radius:8px;padding:5px 12px;font-size:12px;cursor:pointer}
+button.active{background:var(--accent);color:#04121e;border-color:var(--accent);font-weight:600}
+input[type=text],input[type=password]{background:var(--panel2);border:1px solid var(--border);
+  color:var(--fg);border-radius:8px;padding:7px 10px;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--muted);text-align:left;font-weight:500;font-size:11px;text-transform:uppercase;
+  letter-spacing:.05em;padding:6px 10px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+td{padding:9px 10px;border-bottom:1px solid var(--border2,#16202b);vertical-align:middle}
+tr.dev{cursor:pointer} tr.dev:hover{background:#161f2a}
+.st{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:8px}
+.st.on{background:var(--dl)} .st.idle{background:#30475e} .st.block{background:var(--red)}
+.host{font-weight:600}
+.meta{color:var(--muted);font-size:11px}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+canvas.spark{display:block}
+#banner{display:none;background:#3a1d1d;border:1px solid #6e2c2c;color:#ffb4ab;
+  border-radius:var(--radius);padding:12px 16px;margin-bottom:14px}
+#banner.ok{background:#12291b;border-color:#1f5c34;color:#7ee2a0}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--border);
+  border-radius:var(--radius);max-width:760px;width:92%}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+/* docked device panel beside the network map (replaces the old draggable dialog) */
+.mapwrap{display:flex;gap:16px;align-items:stretch}
+#topo{flex:1;min-width:0;overflow-x:auto}
+.dpanel{flex:0 0 clamp(340px, 30vw, 560px);
+  display:flex;flex-direction:column;max-height:calc(100vh - 20px);overflow:auto;
+  background:var(--panel2);
+  border:1px solid var(--border);border-radius:10px;padding:14px;
+  position:sticky;top:10px}
+/* author display rules must not defeat the hidden attribute */
+[hidden]{display:none !important}
+.dp-empty{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 10px}
+#dev-body{display:flex;flex-direction:column;flex:1;min-height:0}
+.dp-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px}
+.dp-head h2{margin:0;font-size:14px;color:var(--fg);text-transform:none;letter-spacing:0;
+  overflow-wrap:break-word}
+.dp-head #dev-close{flex:0 0 auto}
+.dp-actions{margin-top:12px;display:flex;gap:8px}
+.tnode.tdev.sel rect{stroke:var(--accent)}
+tr.dev.sel{background:#16202b}
+@media(max-width:1200px){.mapwrap{flex-direction:column;align-items:stretch}
+  .dpanel{flex:none;width:100%;max-height:none;position:static}}
+.gauge{height:6px;background:var(--panel2);border-radius:3px;margin-top:6px;overflow:hidden}
+.gauge>i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.badge{font-size:10px;background:#312409;color:var(--ul);border:1px solid #6b4d0e;
+  border-radius:6px;padding:1px 7px;margin-left:8px}
+.netb{font-size:10px;background:#102a33;color:#56d4dd;border:1px solid #1c4b57;
+  border-radius:6px;padding:1px 7px;margin-left:6px}
+#netbar{margin-bottom:10px}
+.tnode rect{fill:var(--panel2);stroke:var(--border);stroke-width:1}
+.tnode text{fill:var(--fg);font-size:11px;font-weight:600}
+.tsub{fill:var(--muted);font-size:9px;font-weight:400}
+.tnet rect{stroke:#4cc2ff66} .trouter rect{stroke:#4cc2ff99;fill:#101a26}
+.tcloud rect{fill:#0d1520;stroke:#22303f}
+.tedge{stroke:#24405c;fill:none;stroke-width:1.4}
+.tedge.flow{stroke:#4cc2ff66;stroke-dasharray:7 7;animation:dash 2s linear infinite}
+.dld{fill:#3fb950} .uld{fill:#d29922}
+.trate{font-size:10px;fill:#9fb3c8;font-weight:400}
+@keyframes dash{to{stroke-dashoffset:-28}}
+.tnode.tdev{cursor:pointer} .tnode.tdev:hover rect{stroke:var(--accent)}
+@keyframes tfade{from{opacity:0}} .tnode{animation:tfade .45s ease}
+/* live flows list inside the docked device panel */
+.flows{margin-top:14px;border-top:1px solid var(--border);padding-top:10px;
+  flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+.ftabs{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.ftabs .sub{margin-left:auto;font-size:11px}
+.flist{flex:1;min-height:100px;overflow-y:auto;font-size:12.5px;position:relative}
+.frow{position:relative;display:flex;align-items:baseline;gap:10px;padding:5px 8px;
+  border-radius:7px;overflow:hidden}
+.frow:hover{background:#161f2a}
+.fbar{position:absolute;left:0;top:0;bottom:0;background:#12283b;z-index:0;border-radius:7px}
+.fmain{position:relative;z-index:1;flex:1;min-width:0;display:flex;flex-wrap:wrap;
+  align-items:baseline;gap:7px}
+.fhost{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65%}
+.fhost.fin{color:var(--accent)}
+.fip{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.fmeta{color:var(--muted);font-size:11px}
+.fnum{position:relative;z-index:1;white-space:nowrap;font-variant-numeric:tabular-nums}
+.fsvc{font-size:10px;background:#102a33;color:#56d4dd;border:1px solid #1c4b57;
+  border-radius:6px;padding:0 6px}
+.fwarn{font-size:10px;background:#3a1d1d;color:#ffb4ab;border:1px solid #6e2c2c;
+  border-radius:6px;padding:0 6px;margin-left:6px}
+@media (prefers-reduced-motion:reduce){.tnode{animation:none}}
+svg text{user-select:none}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1><span class="dot" id="conn-dot"></span>MikroTik LAN Monitor <span class="sub" id="board"></span></h1>
+    <div class="sub" id="subinfo">connecting…</div>
+    <div class="sub" id="diag" style="margin-top:2px">diag: starting…</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <div class="sub" id="lastpoll"></div>
+    <button id="cfgbtn" hidden>⚙ Router</button>
+    <button id="logout" hidden>Log out</button>
+  </div>
+</header>
+
+<div id="banner"></div>
+
+<div class="grid cards" style="margin-bottom:14px">
+  <div class="card"><div class="k">Download</div><div class="v dl" id="c-dl">—</div></div>
+  <div class="card"><div class="k">Upload</div><div class="v ul" id="c-ul">—</div></div>
+  <div class="card"><div class="k">Devices online</div><div class="v" id="c-dev">—</div></div>
+  <div class="card"><div class="k">WAN IP</div><div class="v" id="c-wanip" style="font-size:15px">—</div></div>
+  <div class="card"><div class="k">CPU / Memory</div><div class="v" id="c-cpu" style="font-size:15px">—</div>
+    <div class="gauge"><i id="g-cpu" style="width:0%"></i></div></div>
+  <div class="card"><div class="k">Uptime</div><div class="v" id="c-up" style="font-size:15px">—</div></div>
+</div>
+
+<div class="row2" style="margin-bottom:14px">
+  <div class="panel">
+    <h2><span id="wan-title">WAN throughput</span>
+      <span class="toolbar">
+        <button id="m-total" class="active">Total</button>
+        <button id="m-dl">↓ by device</button>
+        <button id="m-ul">↑ by device</button>
+        <span style="width:14px"></span>
+        <button data-range="15" class="active">15m</button>
+        <button data-range="60">1h</button>
+        <button data-range="360">6h</button>
+        <button data-range="1440">24h</button>
+      </span>
+    </h2>
+    <div style="position:relative;height:270px"><canvas id="wanChart"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>Traffic split · last hour</h2>
+    <div style="position:relative;height:230px"><canvas id="pieChart"></canvas></div>
+  </div>
+</div>
+
+<div class="panel" style="margin-bottom:14px">
+  <h2>Network map <span class="sub" style="text-transform:none">moving dashes = live traffic · click a device for details</span></h2>
+  <div class="mapwrap">
+    <div id="topo"></div>
+    <aside class="dpanel" id="devpanel">
+      <div class="dp-empty" id="dev-empty">
+        <div class="sub">Click a device in the map or the table to see<br>its traffic chart and live connections here.</div>
+      </div>
+      <div id="dev-body" hidden>
+        <div class="dp-head">
+          <div style="min-width:0">
+            <h2 id="dev-title">—</h2>
+            <div class="sub" id="dev-meta"></div>
+            <div class="sub" id="dev-wlan" hidden style="color:#56d4dd"></div>
+          </div>
+          <button id="dev-close" title="Close (Esc)">✕</button>
+        </div>
+        <div style="position:relative;height:200px"><canvas id="devChart"></canvas></div>
+        <div class="flows">
+          <div class="ftabs">
+            <button id="f-all" class="active">Live flows</button>
+            <button id="f-in">Accessing you<span id="f-in-n"></span></button>
+            <span class="sub" id="f-note"></span>
+          </div>
+          <div class="flist" id="f-list"><div class="sub">loading…</div></div>
+        </div>
+        <div class="dp-actions">
+          <button id="dev-block"></button>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="row2" style="margin-bottom:14px">
+  <div class="panel">
+    <h2><span>Flows &amp; active hosts <span class="sub" id="fh-now" style="text-transform:none"></span></span>
+      <span class="toolbar">
+        <button data-arange="60">1h</button>
+        <button data-arange="360" class="active">6h</button>
+        <button data-arange="1440">24h</button>
+      </span>
+    </h2>
+    <div style="position:relative;height:230px"><canvas id="flowChart"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2><span>Protocol distribution</span><span class="sub" id="vol-lbl"></span></h2>
+    <div style="position:relative;height:230px"><canvas id="protoChart"></canvas></div>
+  </div>
+</div>
+
+<div class="row2" style="margin-bottom:14px">
+  <div class="panel">
+    <h2>Top conversations <span class="sub" style="text-transform:none">live conntrack · session bytes reset when a connection expires</span></h2>
+    <table>
+      <thead><tr>
+        <th style="cursor:default">Local device</th><th style="cursor:default"></th>
+        <th style="cursor:default">Remote</th><th style="cursor:default">Service</th>
+        <th class="num" style="text-align:right;cursor:default">Rate ↓ / ↑</th>
+        <th class="num" style="text-align:right;cursor:default">Session ↓ / ↑</th>
+      </tr></thead>
+      <tbody id="convbody"><tr><td colspan="6" class="sub">loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Top ports <span class="sub" id="ports-range-lbl">6h</span></h2>
+    <table>
+      <thead><tr>
+        <th style="cursor:default">Port</th><th style="cursor:default">Service</th>
+        <th class="num" style="text-align:right;cursor:default">Traffic</th>
+        <th class="num" style="text-align:right;cursor:default">Flows</th>
+      </tr></thead>
+      <tbody id="portsbody"><tr><td colspan="4" class="sub">loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Devices <input type="text" id="search" placeholder="filter name / ip / mac / vendor…" style="width:240px"></h2>
+  <div id="netbar" class="toolbar"></div>
+  <table>
+    <thead><tr>
+      <th data-sort="name">Device</th>
+      <th data-sort="now" class="num" style="text-align:right">Now ↓ / ↑</th>
+      <th>Trend</th>
+      <th data-sort="total" class="num" style="text-align:right">Total ↓ / ↑</th>
+      <th data-sort="conns" class="num" style="text-align:right">Conns</th>
+      <th>Since</th>
+    </tr></thead>
+    <tbody id="devs"></tbody>
+  </table>
+</div>
+
+<dialog id="authdlg">
+  <div style="padding:18px 20px;width:360px;max-width:90vw">
+    <div style="display:flex;align-items:flex-start;gap:12px">
+      <div style="flex:1">
+        <h2 style="margin:0 0 2px">Router profiles</h2>
+        <div class="sub">One saved login per router or account — switching is instant.</div>
+      </div>
+      <button class="btn" id="a-close" title="Close" style="padding:2px 10px;font-size:14px">✕</button>
+    </div>
+    <div id="prof-list" style="display:grid;gap:6px;margin-top:12px"></div>
+    <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
+    <div style="font-size:11px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Add / update router</div>
+    <div style="display:grid;gap:8px">
+      <input type="text" id="a-host" placeholder="router IP (e.g. 192.168.1.1)">
+      <input type="text" id="a-user" placeholder="username">
+      <input type="password" id="a-pass" placeholder="password (only used to connect)">
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn" id="a-save">Save &amp; connect</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<script>
+const $=s=>document.querySelector(s);
+// surface client-side failures visibly instead of silently blanking widgets
+function showErr(m){let el=document.getElementById('jserr');
+ if(!el){el=document.createElement('div');el.id='jserr';
+  el.style.cssText='position:fixed;left:10px;bottom:10px;right:10px;background:#3a1d1d;border:1px solid #6e2c2c;color:#ffb4ab;padding:8px 12px;border-radius:8px;font:12px monospace;z-index:99;white-space:pre-wrap';
+  document.body.appendChild(el)}
+ el.textContent='JS error: '+m;
+ el.onclick=()=>el.remove();}
+window.addEventListener('error',e=>showErr(e.message+' @'+((e.filename||'').split('/').pop())+':'+e.lineno));
+window.addEventListener('unhandledrejection',e=>showErr('fetch/promise: '+((e.reason&&e.reason.message)||e.reason)));
+// session expiry (or any 401) sends the user back to the login page
+const _fetch=window.fetch.bind(window);
+window.fetch=async(u,o)=>{const r=await _fetch(u,o);
+ if(r.status===401){location.assign('/login');throw new Error('session expired')}
+ return r};
+(async()=>{try{const s=await(await _fetch('/api/session')).json();
+ const b=$('#logout');if(b)b.hidden=!s.auth_required;
+ const cb=$('#cfgbtn');if(cb)cb.hidden=!s.auth_required;
+ }catch(e){}})();
+addEventListener('DOMContentLoaded',()=>{const b=$('#logout');if(b)b.onclick=async()=>{
+ await fetch('/api/logout',{method:'POST'});location.assign('/login');};});
+const fmtBps=b=>{if(b==null)return'—';const u=['bps','Kbps','Mbps','Gbps'];let i=0;b=+b;
+ while(b>=1000&&i<3){b/=1000;i++}return b.toFixed(b>=100||i===0?0:1)+' '+u[i]};
+const fmtB=b=>{if(b==null)return'—';const u=['B','KiB','MiB','GiB','TiB'];let i=0;b=+b;
+ while(b>=1024&&i<4){b/=1024;i++}return b.toFixed(i?1:0)+' '+u[i]};
+const chartFont={size:10};
+Chart.defaults.color='#8494a7';Chart.defaults.borderColor='#1e2936';Chart.defaults.font.size=10;
+
+const wanChart=new Chart($('#wanChart'),{type:'line',data:{datasets:[
+ {label:'Download',data:[],borderColor:'#3fb950',backgroundColor:'rgba(63,185,80,.12)',fill:true,
+  borderWidth:1.6,pointRadius:0,tension:.25},
+ {label:'Upload',data:[],borderColor:'#d29922',backgroundColor:'rgba(210,153,34,.10)',fill:true,
+  borderWidth:1.6,pointRadius:0,tension:.25}]},
+ options:{responsive:true,animation:false,interaction:{mode:'index',intersect:false},
+  scales:{x:{type:'time',time:{displayFormats:{hour:'HH:mm',minute:'HH:mm',second:'HH:mm:ss'}},
+   ticks:{maxTicksLimit:8}},
+   y:{beginAtZero:true,ticks:{callback:v=>fmtBps(v)}}},
+  plugins:{legend:{labels:{boxWidth:12}}},parsing:false,maintainAspectRatio:false}});
+const pieChart=new Chart($('#pieChart'),{type:'doughnut',data:{labels:['You','others…'],datasets:[
+ {data:[1,1],backgroundColor:['#4cc2ff','#31445c','#3fb950','#d29922','#f85149','#a371f7','#39c5cf'],borderWidth:0}]},
+ options:{plugins:{legend:{position:'right',labels:{boxWidth:10,font:{size:11}}}},cutout:'62%',maintainAspectRatio:false}});
+let dlgChart=null, rangeMin=15, sortKey='now', devices=[], totalsCache={};
+
+// ---- WAN history (user-selected range; total or netflow-style per-device stack)
+let wanMode='total';
+const PALETTE=['#4cc2ff','#3fb950','#d29922','#f85149','#a371f7','#39c5cf','#e69f00','#cc79a7','#7ee2a0','#f778ba'];
+async function loadWan(){
+ const buckets={15:5,60:30,360:120,1440:300};
+ $('#wan-title').textContent=wanMode==='total'?'WAN throughput':'Per-device traffic';
+ wanChart.options.scales.y.stacked=(wanMode!=='total');
+ if(wanMode==='total'){
+  const r=await fetch(`/api/history?range_min=${rangeMin}&bucket=${buckets[rangeMin]||5}`);
+  const d=await r.json();
+  wanChart.data.datasets=[
+   {label:'Download',data:d.series.map(s=>({x:s[0]*1000,y:s[1]})),borderColor:'#3fb950',
+    backgroundColor:'rgba(63,185,80,.12)',fill:'origin',borderWidth:1.6,pointRadius:0,tension:.25},
+   {label:'Upload',data:d.series.map(s=>({x:s[0]*1000,y:s[2]})),borderColor:'#d29922',
+    backgroundColor:'rgba(210,153,34,.10)',fill:'origin',borderWidth:1.6,pointRadius:0,tension:.25}];
+ }else{
+  const r=await fetch(`/api/history/stack?range_min=${rangeMin}&bucket=${buckets[rangeMin]||5}`);
+  const d=await r.json();
+  const st=window._lastState||{};const devs=st.devices||[];
+  const label={};devs.forEach(x=>{label[x.mac]=x.hostname||x.vendor||x.ip||x.mac.slice(0,8);});
+  const which=wanMode==='dl'?1:2;
+  const tot={};d.series.forEach(s=>{tot[s.key]=s.points.reduce((a,p)=>a+p[which],0)});
+  const top=Object.keys(tot).filter(k=>tot[k]>0).sort((a,b)=>tot[b]-tot[a]).slice(0,9);
+  const ds=top.map((k,i)=>({
+    label:label[k]||k.slice(0,8),
+    data:d.series.find(s=>s.key===k).points.map(p=>({x:p[0]*1000,y:p[which]})),
+    borderColor:PALETTE[i%PALETTE.length],backgroundColor:PALETTE[i%PALETTE.length]+'30',
+    fill:'origin',borderWidth:1,pointRadius:0,stepped:'middle'}));
+  const ot={};d.series.forEach(s=>{if(!top.includes(s.key))s.points.forEach(p=>{ot[p[0]]=(ot[p[0]]||0)+p[which]})});
+  if(Object.keys(ot).length)ds.push({label:'others',
+    data:Object.entries(ot).map(([t,v])=>({x:+t*1000,y:v})).sort((a,b)=>a.x-b.x),
+    borderColor:'#31445c',backgroundColor:'#31445c55',fill:'origin',borderWidth:1,pointRadius:0,stepped:'middle'});
+  wanChart.data.datasets=ds;
+ }
+ window._diagPts=(wanChart.data.datasets[0]?.data||[]).length;
+ wanChart.update('none');
+}
+[['m-total','total'],['m-dl','dl'],['m-ul','ul']].forEach(([id,m])=>$('#'+id).onclick=()=>{
+ wanMode=m;document.querySelectorAll('#m-total,#m-dl,#m-ul').forEach(b=>b.classList.toggle('active',b.id===id));
+ loadWan();});
+document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));
+ b.classList.add('active');rangeMin=+b.dataset.range;loadWan()});
+
+// ---- sparkline history cache (per-device series are keyed by MAC)
+const sparkCache={};
+async function loadSpark(mac){
+  const r=await fetch(`/api/history?range_min=15&bucket=15&mac=${encodeURIComponent(mac)}`);
+  sparkCache[mac]=(await r.json()).series;
+}
+
+// ---- network map
+let _topoSig='',_topoClick=false;
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function ticon(n){const s=(n||'').toLowerCase();
+ if(/watch|band\b/.test(s))return '⌚';
+ if(/iphone|pixel|galaxy|phone|oneplus|xiaomi|redmi|huawei/.test(s))return '📱';
+ if(/\btv\b|roku|chromecast|shield|mi tv|smarttv/.test(s))return '📺';
+ if(/print|canon|brother|epson|hp-laser/.test(s))return '🖨️';
+ if(/wrt|router|mesh|tp-link|unifi|cisco|\bap-?\d/.test(s))return '📶';
+ if(/nas|synology|qnap|raid/.test(s))return '🗄️';
+ if(/orange|jetson|server|ubuntu|debian|portainer|transmission|bot|docker|pve|proxmox|\bpi\b|\bnas\b/.test(s))return '📦';
+ return '💻';}
+function tdur(bps){if(bps<1500)return null;return Math.max(.3,2.6-Math.min(bps/4e6,1)*2.3)}
+function edge(x1,y1,x2,y2,key){const c=Math.max(40,(x2-x1)/2);
+ return `<path class="tedge" data-edge="${esc(key)}" d="M${x1},${y1} C${x1+c},${y1} ${x2-c},${y2} ${x2},${y2}"/>`}
+function nodeSVG(x,y,w,label,sub,cls,extra){return `<g class="tnode ${cls||''}" ${extra||''} transform="translate(${x},${y})">
+ <rect x="0" y="-15" width="${w}" height="${sub?34:28}" rx="8"/>
+ <text x="9" y="${sub?0:5}">${label}</text>
+ ${sub?`<text class="tsub" x="9" y="13">${sub}</text>`:''}</g>`}
+let _tm={},_te={},_tnl=[],_wl=null,_tv={};
+let _tS=null,_tY=null,_tAnim=null,_topoMaxW=196;
+const TSWAP=420;                       // ms for two map nodes swapping places
+const _noMotion=matchMedia('(prefers-reduced-motion: reduce)');
+function edgeD(x1,y1,x2,y2){const c=Math.max(40,(x2-x1)/2);
+ return `M${x1},${y1} C${x1+c},${y1} ${x2-c},${y2} ${x2},${y2}`}
+// layout for the CURRENT order (the backend sorts devices by live rate, so the
+// order changes constantly; positions are derived, never baked into markup)
+function topoLayout(s){
+ const t=s.topo;
+ const hasP=t.nets.some(n=>n.groups.some(g=>g.port));
+ const X={cloud:12,router:175,hub:350,port:548,dev:hasP?730:560};
+ const dev={},via={},nets=[];
+ let y=52;
+ for(const n of t.nets){
+  const nk='net:'+n.label; nets.push(nk);
+  via[nk]={x:X.hub,off:164,macs:[],kind:'net',label:n.label};
+  for(const g of n.groups){
+   const k=g.port?('port:'+n.label+':'+g.port):nk;
+   if(g.port)via[k]={x:X.port,off:132,macs:[],kind:'port',port:g.port};
+   for(const d of g.devices){
+    dev[d.mac]={y,gx:g.port?X.dev:(X.port||560),via:k,name:d.name,ip:d.ip,fw:d.fw,board:d.board,wlan:d.wlan};
+    via[k].macs.push(d.mac); via[nk].macs.push(d.mac); y+=36+14*((d.fw?1:0)+(d.wlan?1:0))}
+   if(g.devices.length)y+=14}}
+ const H=Math.max(y+26,190),mid=Math.round(H/2),W=(hasP?X.dev:560)+215;
+ for(const k in via){const ys=via[k].macs.map(m=>dev[m].y);
+  via[k].y=ys.length?(Math.min(...ys)+Math.max(...ys))/2:mid}
+ return {X,mid,H,W,dev,via,nets};
+}
+// measure a .tdev group's rendered text and widen its rect to fit; returns
+// the needed width (rect + online dot grow with it; callers grow the svg).
+function fitDev(g){
+ let w=196;
+ for(const t of g.querySelectorAll('text')){
+  const len=t.getComputedTextLength(); if(!len)continue;
+  w=Math.max(w,(parseFloat(t.getAttribute('x'))||0)+len+9)}
+ w=Math.ceil(w);
+ const r=g.querySelector('rect');
+ if(r&&w>+r.getAttribute('width')){r.setAttribute('width',w);
+  const c=g.querySelector('[data-dot]');if(c)c.setAttribute('cx',w-10)}
+ return w}
+function buildTopo(s){
+ const L=topoLayout(s),t=s.topo,X=L.X;
+ let e='',nodes='';
+ e+=`<path class="tedge" data-edge="wan" d="${edgeD(X.cloud+138,L.mid,X.router,L.mid)}"/>`;
+ for(const nk of L.nets){const v=L.via[nk];
+  e+=`<path class="tedge" data-edge="${esc('net:'+v.label)}" d="${edgeD(X.router+152,L.mid,v.x,v.y)}"/>`}
+ for(const mac in L.dev){const d=L.dev[mac],v=L.via[d.via];
+  e+=`<path class="tedge" data-edge="${esc('dev:'+mac)}" d="${edgeD(v.x+v.off,v.y,d.gx,d.y)}"/>`}
+ // port + device + net-hub nodes
+ for(const k in L.via)if(L.via[k].kind==='port')
+  nodes+=nodeSVG(L.via[k].x,L.via[k].y,124,'🔌 '+esc(L.via[k].port),'','',`data-via="${esc(k)}"`);
+ for(const nk of L.nets){const v=L.via[nk],p=v.label.split(' (');
+  nodes+=`<g class="tnode tnet" data-netlab="${esc(v.label)}" data-via="${esc(nk)}" transform="translate(${v.x},${v.y})">
+   <rect x="0" y="-17" width="164" height="48" rx="8"/>
+   <text x="9" y="-3">🖧 ${esc(p[0])}</text>
+   <text class="tsub" x="9" y="9">${esc(p[1]?p[1].slice(0,-1):'')}</text>
+   <text class="trate" x="9" y="24"><tspan class="dld" data-k="ndl">↓—</tspan><tspan class="uld" data-k="nul"> ↑—</tspan></text></g>`}
+ for(const mac in L.dev){const d=L.dev[mac];const nlines=(d.fw?1:0)+(d.wlan?1:0);
+   nodes+=`<g class="tnode tdev" data-mac="${esc(mac)}" data-ip="${esc(d.ip)}" transform="translate(${d.gx},${d.y})">
+     <rect x="0" y="-15" width="196" height="${31+13*nlines}" rx="8"/><title>${esc(d.name)} (${esc(d.ip)})</title>
+     <text x="9" y="-2">${ticon(d.name)} ${esc((d.name||'').slice(0,18))}</text>
+     <text class="trate" x="9" y="11"><tspan fill="#8494a7">${esc(d.ip)}</tspan>
+      <tspan class="dld" data-k="dl"> ↓—</tspan><tspan class="uld" data-k="ul"> ↑—</tspan></text>
+     ${d.fw?`<text class="tsub" x="9" y="24">${esc([d.board,d.fw?'RouterOS '+d.fw:''].filter(Boolean).join(' · '))}</text>`:''}
+     ${d.wlan?`<text class="tsub" x="9" y="${d.fw?37:24}">📶 ${esc(d.wlan.ssid)} ${esc(d.wlan.signal)}dBm${d.wlan.chipset?' · '+esc(d.wlan.chipset):''}</text>`:''}
+     <circle cx="186" cy="-7" r="4" fill="#30475e" data-dot/></g>`}
+ nodes+=nodeSVG(X.router,L.mid,146,'🧭 '+esc(t.router.board||'router'),'RouterOS '+esc(t.router.version),'trouter');
+ nodes+=nodeSVG(X.cloud,L.mid,126,'☁️ Internet',esc(t.wan.ip||''),'tcloud');
+ nodes+=`<text class="trate" x="${X.router-10}" y="${L.mid-22}" text-anchor="end">
+  <tspan class="dld" data-k="wdl">↓—</tspan> <tspan class="uld" data-k="wul">↑—</tspan></text>`;
+ $('#topo').innerHTML=`<svg width="${L.W}" height="${L.H}" xmlns="http://www.w3.org/2000/svg">${e}${nodes}</svg>`;
+ // cache element refs (no fragile selectors later)
+ _tS=L; _tY={}; for(const mac in L.dev)_tY[mac]=L.dev[mac].y;
+ _tm={};$('#topo').querySelectorAll('.tdev').forEach(g=>_tm[g.dataset.mac]=
+  {dl:g.querySelector('[data-k="dl"]'),ul:g.querySelector('[data-k="ul"]'),dot:g.querySelector('[data-dot]'),g});
+ _te={};$('#topo').querySelectorAll('.tedge').forEach(p=>_te[p.dataset.edge]=p);
+ _tv={};$('#topo').querySelectorAll('[data-via]').forEach(g=>_tv[g.dataset.via]=g);
+ _tnl=[];$('#topo').querySelectorAll('[data-netlab]').forEach(g=>_tnl.push(
+  {label:g.dataset.netlab,dl:g.querySelector('[data-k="ndl"]'),ul:g.querySelector('[data-k="nul"]')}));
+ _wl={dl:$('#topo').querySelector('[data-k="wdl"]'),ul:$('#topo').querySelector('[data-k="wul"]')};
+ // grow node boxes to fit their text: board names and rate strings vary in
+ // length and SVG text never wraps — measure rendered text, widen the rect
+ // (and move the online dot with it), and extend the svg so nothing clips.
+ _topoMaxW=196;
+ $('#topo').querySelectorAll('.tdev').forEach(g=>{_topoMaxW=Math.max(_topoMaxW,fitDev(g))});
+ if(_topoMaxW>196){const svg=$('#topo').firstElementChild;
+   svg.setAttribute('width',svg.width.baseVal.value-196+_topoMaxW)}
+ if(!_topoClick){_topoClick=true;$('#topo').addEventListener('click',ev=>{
+  const g=ev.target.closest('.tdev');if(g)openDev(g.dataset.ip,g.dataset.mac)})}
+}
+// write current animated positions to the DOM (nodes, hub/port nodes and edges)
+function paintTopo(){
+ if(!_tS)return;const L=_tS, cy={};
+ for(const k in L.via){const v=L.via[k];const ys=v.macs.map(m=>_tY[m]).filter(z=>z!=null);
+  if(!ys.length)continue;const y=(Math.min(...ys)+Math.max(...ys))/2;cy[k]=y;
+  if(_tv[k])_tv[k].setAttribute('transform',`translate(${v.x},${y})`);
+  const ne=v.kind==='net'?_te['net:'+v.label]:null;
+  if(ne)ne.setAttribute('d',edgeD(L.X.router+152,L.mid,v.x,y))}
+ for(const mac in L.dev){const d=L.dev[mac],y=_tY[mac];if(y==null)continue;
+  if(_tm[mac]&&_tm[mac].g)_tm[mac].g.setAttribute('transform',`translate(${d.gx},${y})`);
+  const e=_te['dev:'+mac],v=L.via[d.via];
+  if(e)e.setAttribute('d',edgeD(v.x+v.off,cy[d.via]!=null?cy[d.via]:v.y,d.gx,y))}
+}
+// the order changed but the set of devices did not: glide to the new layout
+function swapTopo(s){
+ const L=topoLayout(s),to={};for(const mac in L.dev)to[mac]=L.dev[mac].y;
+ const keys=Object.keys(to);
+ const idle=keys.length===Object.keys(_tY).length&&keys.every(m=>Math.abs(to[m]-_tY[m])<0.5);
+ if(idle){_tY=to;paintTopo();return}
+ cancelAnimationFrame(_tAnim);
+ if(_noMotion.matches){_tY=to;paintTopo();return}
+ const from={..._tY},t0=performance.now();
+ const step=now=>{
+  const k=Math.min(1,(now-t0)/TSWAP),u=k<.5?4*k*k*k:1-Math.pow(-2*k+2,3)/2;
+  for(const mac in to)_tY[mac]=from[mac]==null?to[mac]:from[mac]+(to[mac]-from[mac])*u;
+  paintTopo();
+  if(k<1)_tAnim=requestAnimationFrame(step);};
+ _tAnim=requestAnimationFrame(step);
+}
+function liveTopo(s,spd){
+ const setE=(k,bps)=>{const el=_te[k];if(!el)return;const d=tdur(bps);
+  el.classList.toggle('flow',!!d);if(d)el.style.animationDuration=d+'s'};
+ const w=s.wan||{};setE('wan',(w.rx_bps||0)+(w.tx_bps||0));
+ if(_wl&&_wl.ul){_wl.dl.textContent='↓'+fmtBps(w.rx_bps||0);_wl.ul.textContent='↑'+fmtBps(w.tx_bps||0)}
+ for(const n of _tnl){const v=(s.nets||{})[n.label];if(v&&n.dl){
+   n.dl.textContent='↓'+fmtBps(v.rx_bps);n.ul.textContent=' ↑'+fmtBps(v.tx_bps);
+   setE('net:'+n.label,v.rx_bps+v.tx_bps)}}
+ for(const[mac,d]of Object.entries(spd)){const m=_tm[mac];if(!m||!m.dl)continue;
+  m.dl.textContent=' ↓'+fmtBps(d.rx_bps);m.ul.textContent=' ↑'+fmtBps(d.tx_bps);
+  // rates can lengthen the row after the build-time fit (0 bps -> 940 Mbps)
+  const rw=fitDev(m.g);
+  if(rw>_topoMaxW){const svg=$('#topo').firstElementChild;
+   if(svg)svg.setAttribute('width',svg.width.baseVal.value+(rw-_topoMaxW));_topoMaxW=rw}
+  if(m.dot)m.dot.setAttribute('fill',d.blocked?'#f85149':((d.rx_bps+d.tx_bps)>8000?'#3fb950':'#30475e'));
+  setE('dev:'+mac,d.rx_bps+d.tx_bps)}
+}
+function renderTopo(s){
+ const t=s.topo;
+ if(!t||!t.nets||!t.nets.length||!t.nets.some(n=>n.groups.some(g=>g.devices.length))){
+  _topoSig='';cancelAnimationFrame(_tAnim);_tS=null;_tY=null;
+  $('#topo').innerHTML='';_tm={};_te={};_tv={};_tnl=[];_wl=null;return}
+ const spd={};(s.devices||[]).forEach(d=>spd[d.mac]=d);
+ // STRUCTURE only (device set / names / ports), deliberately order-insensitive:
+ // a speed reorder must tween, not rebuild
+ const sig=t.nets.map(n=>n.label+':'+n.groups.map(g=>g.port+'|'+
+   g.devices.map(d=>d.mac+d.name+d.ip+(d.wlan?'/'+d.wlan.ssid:'')).sort().join(',')).sort().join(';')).join('#')
+  +'|'+(t.wan.name||'')+(t.wan.ip||'')+(t.router.board||'')+(t.router.version||'');
+ if(sig!==_topoSig){_topoSig=sig;buildTopo(s)}else swapTopo(s);
+ liveTopo(s,spd);
+ markSel();
+}
+
+function updDiag(s){const el=$('#diag');if(!el)return;
+ const chartOk=typeof Chart!=='undefined';
+ let scaleOk=false;try{scaleOk=!!(chartOk&&Chart.registry.getScale('time'));}catch(e){}
+ const parts=[`backend ${s.connected?'ok':'DOWN'}`,`Chart ${chartOk?Chart.version:'MISSING'}`,
+  `time-scale ${scaleOk?'ok':'MISSING'}`,`pts ${window._diagPts||0}`,
+  `map ${document.querySelectorAll('.tdev').length}`,`rows ${document.querySelectorAll('tr.dev').length}`];
+ el.style.color=(!chartOk||!scaleOk||!s.connected)?'#f85149':'';
+ el.textContent='diag: '+parts.join(' · ');}
+
+// ---- main poll
+async function poll(){
+ let s;try{s=await(await fetch('/api/state')).json()}catch(e){setConn(false,'backend unreachable');updDiag({connected:false});return}
+ window._lastState=s;
+ window.allowControl=!!s.config?.allow_control;
+ window._cfg=s.config||{};
+ setConn(s.connected,s.last_error);
+ const sy=s.system||{},wa=s.wan||{},t=s.totals||{};
+ $('#board').textContent=sy.board?`${sy.board} · RouterOS ${sy.version}`:'';
+ $('#subinfo').textContent=s.connected?
+  `${wa.ifaces?.[0]?.name||''}${wa.ifaces?.[0]?.rate?' @ '+wa.ifaces[0].rate:''} · gw ${wa.gw||'—'}`
+  +(s.wifi&&s.wifi.length?` · 📶 ${(s.wifi||[]).reduce((a,r)=>a+(r.stations||0),0)} WiFi`:''):'not connected';
+ $('#lastpoll').textContent=s.updated?'updated '+new Date(s.updated*1000).toLocaleTimeString():'';
+ $('#c-dl').innerHTML=fmtBps(t.wan_rx_bps).replace(' ',' <small>');
+ $('#c-ul').innerHTML=fmtBps(t.wan_tx_bps).replace(' ',' <small>');
+ $('#c-dev').textContent=`${t.devices_online??'—'} / ${t.devices_total??'—'}`;
+ $('#c-wanip').textContent=wa.ip||'—';
+ $('#c-cpu').textContent=`${Math.round(sy.cpu_load||0)}% / ${sy.mem_total?Math.round((1-sy.mem_free/sy.mem_total)*100):0}%`;
+ $('#g-cpu').style.width=(sy.cpu_load||0)+'%';
+ $('#c-up').textContent=sy.uptime||'—';
+ $('#fh-now').textContent=`· now: ${t.flows??'—'} flows · ${t.active_hosts??'—'} active hosts`;
+ devices=s.devices||[];
+ renderNetBar(s);
+ renderTopo(s);
+ renderDevs(s);
+ updDiag(s);
+ if(s.config?.allow_control)document.querySelectorAll('.ctl').forEach(b=>b.style.display='');
+}
+function setConn(on,err){
+ $('#conn-dot').classList.toggle('on',!!on);
+ const b=$('#banner');
+ if(!on){b.style.display='block';b.classList.remove('ok');
+  const msg=err||'';
+  b.innerHTML=(/credentials|not configured|invalid user|password/i.test(msg)?
+   '⚠ Router login needed. <button class="btn" id="openauth">Enter credentials</button>':
+   '⚠ Router not reachable: '+msg.replace(/</g,'&lt;'));
+  const oa=$('#openauth');if(oa)oa.onclick=openCfg;
+  }else b.style.display='none';
+}
+function rate(s){return fmtBps(s.rx_bps)+' ↓ / '+fmtBps(s.tx_bps)+' ↑'}
+let currentNet='';
+function renderNetBar(s){
+ const nets=s.nets||{};const keys=Object.keys(nets).filter(k=>k&&nets[k].total);
+ const bar=$('#netbar');
+ if(keys.length<2){bar.innerHTML='';currentNet='';return}
+ if(currentNet&&!nets[currentNet])currentNet='';
+ const short=k=>k.split(' (')[0].replace(/^vlan/i,'VLAN');
+ bar.innerHTML=`<button class="${currentNet===''?'active':''}" data-net="">All (${s.totals?.devices_online??0})</button>`+
+  keys.map(k=>`<button class="${currentNet===k?'active':''}" data-net="${k}">${short(k)} · ${nets[k].online}/${nets[k].total} dev · ${fmtBps(nets[k].rx_bps+nets[k].tx_bps)}</button>`).join('');
+ bar.querySelectorAll('button').forEach(b=>b.onclick=()=>{currentNet=b.dataset.net;renderNetBar(s);renderDevs(s)});
+}
+function renderDevs(s){
+ const q=$('#search').value.toLowerCase();
+ const t=Date.now()/1000;
+ const devTotals={};
+ // totals come from sqlite via state? fetch async — cache separately
+ const list=devices.filter(d=>(!currentNet||d.net===currentNet)&&
+   (!q||(d.hostname+' '+d.ip+' '+d.mac+' '+d.vendor+' '+(d.net||'')).toLowerCase().includes(q)));
+ const key={name:d=>(d.hostname||d.vendor||d.ip).toLowerCase(),
+   now:d=>-(d.rx_bps+d.tx_bps),total:d=>-(d.rx_total||0),conns:d=>-d.connections}[sortKey];
+ list.sort((a,b)=>key(a)<key(b)?-1:1);
+ $('#devs').innerHTML=list.map(d=>{
+  const st=d.blocked?'block':(d.rx_bps+d.tx_bps>8000?'on':'idle');
+  return `<tr class="dev" data-ip="${esc(d.ip)}" data-mac="${esc(d.mac)}">
+   <td><span class="st ${st}"></span><span class="host">${esc(d.hostname||d.vendor||'unknown')}</span>
+     ${d.blocked?'<span class="badge">paused</span>':''}
+     ${d.net&&d.net!=='other'?`<span class="netb">${esc(d.net.split(' (')[0].replace(/^vlan/i,'VLAN'))}</span>`:''}
+     <div class="meta">${esc(d.ip)} · ${esc(d.board||d.vendor||'—')}${d.fw?' · RouterOS '+esc(d.fw):''}${d.wlan?` · 📶 ${esc(d.wlan.ssid)} ${esc(d.wlan.signal)}dBm`:''} · ${esc(d.mac)}</div></td>
+   <td class="num"><span class="dl">${fmtBps(d.rx_bps)}↓</span> <span class="ul">${fmtBps(d.tx_bps)}↑</span></td>
+   <td><canvas class="spark" width="110" height="26" data-mac="${esc(d.mac)}"></canvas></td>
+   <td class="num"><span class="dl">${fmtB(d.rx_total)}↓</span> <span class="ul">${fmtB(d.tx_total)}↑</span></td>
+   <td class="num">${d.connections||''}</td>
+   <td class="meta">${d.first_seen?new Date(d.first_seen*1000).toLocaleDateString():''}</td></tr>`;
+ }).join('');
+ if(_devIP) $('#devs').querySelectorAll(`tr.dev[data-ip="${CSS.escape(_devIP)}"]`).forEach(tr=>tr.classList.add('sel'));
+ // sparklines
+ document.querySelectorAll('canvas.spark').forEach(cv=>{
+  const ser=sparkCache[cv.dataset.mac];if(!ser||!ser.length)return;
+  const ctx=cv.getContext('2d'),W=cv.width,H=cv.height;ctx.clearRect(0,0,W,H);
+  const max=Math.max(...ser.map(x=>x[1]+x[2]),1);
+  const draw=(get,color)=>{ctx.beginPath();ser.forEach((p,i)=>{
+    const x=i/(ser.length-1)*W,y=H-get(p)/max*H;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+   ctx.strokeStyle=color;ctx.lineWidth=1.2;ctx.stroke()};
+  draw(p=>p[1],'#3fb950');draw(p=>p[2],'#d29922');
+ });
+ document.querySelectorAll('tr.dev').forEach(tr=>tr.onclick=()=>openDev(tr.dataset.ip,tr.dataset.mac));
+}
+// totals from history db (1-min poll, cheaper)
+async function loadTotals(){
+ // reuse history: cumulative stored server-side would be ideal; use /api/history sum
+}
+document.querySelectorAll('th[data-sort]').forEach(th=>th.onclick=()=>{sortKey=th.dataset.sort;renderDevs({})});
+$('#search').oninput=()=>renderDevs({});
+
+// ---- device detail panel (docked beside the network map)
+let _devIP='', _devMac='';
+function markSel(){
+  document.querySelectorAll('.tdev').forEach(g=>g.classList.toggle('sel',g.dataset.mac===_devMac));
+  document.querySelectorAll('tr.dev').forEach(tr=>tr.classList.toggle('sel',tr.dataset.ip===_devIP));
+}
+function closeDev(){
+  $('#dev-body').hidden=true; $('#dev-empty').hidden=false;
+  _devIP=''; _devMac=''; _flIP='';
+  markSel();
+}
+$('#dev-close').onclick=closeDev;
+addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#dev-body').hidden)closeDev()});
+async function openDev(ip,mac){
+ const d=(ip&&devices.find(x=>x.ip===ip))||devices.find(x=>x.mac===mac);if(!d)return;
+ _devIP=ip; _devMac=mac;
+ $('#dev-empty').hidden=true; $('#dev-body').hidden=false;
+ $('#dev-title').textContent=d.hostname||d.vendor||ip;
+ $('#dev-meta').textContent=`${ip} · ${d.mac} · ${d.board||d.vendor||'unknown vendor'}`
+   +`${d.fw?` · RouterOS ${d.fw}`:''} · ${d.interface||''}`;
+ const wl=$('#dev-wlan');
+ if(wl){ if(d.wlan){wl.hidden=false;wl.textContent=`📶 ${d.wlan.ssid||''} · ${d.wlan.band||''}`
+   +`${d.wlan.chipset?` · ${d.wlan.chipset}`:''} · ${d.wlan.signal} dBm`
+   +`${d.wlan.ccq?` · CCQ ${d.wlan.ccq}%`:''}`
+   +`${d.wlan.tx_rate?` · PHY ${d.wlan.tx_rate}`:''}${d.wlan.uptime?` · online ${d.wlan.uptime}`:''}`;}
+   else wl.hidden=true; }
+ const bl=$('#dev-block');
+ bl.style.display=(window.allowControl)?'':'none';
+ bl.textContent=d.blocked?'Resume internet':'Pause internet';
+ bl.onclick=async()=>{await fetch('/api/control',{method:'POST',headers:{'content-type':'application/json'},
+   body:JSON.stringify({ip,action:d.blocked?'unblock':'block'})});poll();closeDev()};
+ markSel();
+ if(ip) openFlows(ip); else { _flIP=''; $('#f-list').innerHTML='<div class="sub">device has no IP</div>'; }
+ const r=await fetch(`/api/history?range_min=60&bucket=60&mac=${encodeURIComponent(mac)}`);
+ const s=(await r.json()).series;
+ if(dlgChart)dlgChart.destroy();
+ dlgChart=new Chart($('#devChart'),{type:'line',data:{datasets:[
+  {label:'Download',data:s.map(x=>({x:x[0]*1000,y:x[1]})),borderColor:'#3fb950',
+   backgroundColor:'rgba(63,185,80,.15)',fill:true,pointRadius:0,borderWidth:1.5,tension:.25},
+  {label:'Upload',data:s.map(x=>({x:x[0]*1000,y:x[2]})),borderColor:'#d29922',
+   backgroundColor:'rgba(210,153,34,.12)',fill:true,pointRadius:0,borderWidth:1.5,tension:.25}]},
+  options:{animation:false,maintainAspectRatio:false,scales:{x:{type:'time',time:{displayFormats:{hour:'HH:mm',minute:'HH:mm'}}},
+   y:{beginAtZero:true,ticks:{callback:v=>fmtBps(v)}}},parsing:false}});
+}
+
+// ---- live flows (who this device is talking to) inside the device dialog
+let _flIP='', _flTab='all', _fl=null, _flTimer=null;
+const _fLabel=p=>(p.names&&p.names[0])||p.ptr||p.ip;
+function renderFlows(){
+  const box=$('#f-list'), note=$('#f-note');
+  if(!_fl){box.innerHTML='<div class="sub">no flow data</div>';note.textContent='';return}
+  const all=_fl.peers||[];
+  const inb=all.filter(p=>p.inbound||p.inbound_conns>0);
+  $('#f-in-n').textContent=inb.length?` (${inb.length})`:'';
+  const rows=_flTab==='in'?inb:all;
+  if(!rows.length){box.innerHTML=`<div class="sub">${
+    _flTab==='in'?'nothing is initiating connections to this device':'no WAN connections in the table right now'}</div>`;
+    note.textContent=`${_fl.peers_total} peers · ${_fl.conns} conns`;return}
+  const maxr=Math.max(...rows.map(p=>p.rx_bps+p.tx_bps),1);
+  box.innerHTML=rows.map(p=>{
+    const rate=p.rx_bps+p.tx_bps, wide=Math.round(Math.max(2,(rate/maxr)*100));
+    const svc=(p.ports||[]).slice(0,2).map(s=>`<span class="fsvc">${esc(s)}</span>`).join('');
+    const shown=rate>500?`<span class="dl">${fmtBps(p.rx_bps)}↓</span> <span class="ul">${fmtBps(p.tx_bps)}↑</span>`
+      :`<span class="meta">idle · ${fmtB(p.rx_total)}↓ ${fmtB(p.tx_total)}↑</span>`;
+    const host=_fLabel(p), isHost=host!==p.ip;
+    const warn=(p.unanswered>0&&p.inbound)?`<span class="fwarn">no reply ×${p.unanswered}</span>`:'';
+    return `<div class="frow" title="${esc(p.ip)} · ${p.conns} conn(s) · ${(p.proto||[]).join('/')||'?'}">
+      <div class="fbar" style="width:${wide}%"></div>
+      <div class="fmain">
+        <span class="fhost ${p.inbound?'fin':''}">${p.inbound?'⇣ ':''}${esc(host)}</span>
+        ${isHost?`<span class="fip">${esc(p.ip)}</span>`:''}
+        <span class="fmeta">${svc}${p.conns>1?` <span class="fip">×${p.conns}</span>`:''} ${warn}</span>
+      </div>
+      <div class="fnum">${shown}</div></div>`}).join('');
+  const g=(_fl.groups||[]).filter(x=>x.peers>1);
+  const hp=(_fl.hairpin&&_fl.hairpin.conns)?` · ${_fl.hairpin.conns} hairpin→own WAN`:'';
+  note.textContent=`${_fl.peers_total} peer(s) · ${_fl.conns} WAN conns`
+    +(_fl.truncated?` (showing top ${_fl.peers.length})`:'')
+    +hp+(_fl.lan_conns?` · ${_fl.lan_conns} LAN`:'')
+    +(g.length?` · ${g.slice(0,3).map(x=>`${x.suffix} ×${x.peers}`).join(', ')}`:'')
+    +(_fl.names_pending?` · resolving ${_fl.names_pending} name(s)…`:'');
+}
+async function loadFlows(ip){
+  if(!ip||ip!==_flIP)return;                     // dialog moved on to another device
+  try{
+    const r=await fetch(`/api/peers?ip=${encodeURIComponent(ip)}&limit=25`);
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    _fl=await r.json(); renderFlows();
+  }catch(e){ _fl=null; $('#f-list').innerHTML='<div class="sub">flows unavailable: '+esc(String(e.message||e))+'</div>'; }
+}
+function openFlows(ip){
+  _flIP=ip; _fl=null; _flTab='all';
+  $('#f-all').classList.add('active'); $('#f-in').classList.remove('active');
+  $('#f-list').innerHTML='<div class="sub">loading…</div>'; $('#f-note').textContent='';
+  loadFlows(ip);
+  clearInterval(_flTimer);
+  _flTimer=setInterval(()=>{ if(!$('#dev-body').hidden) loadFlows(_flIP); else clearInterval(_flTimer); },3000);
+}
+$('#f-all').onclick=()=>{_flTab='all';$('#f-all').classList.add('active');$('#f-in').classList.remove('active');renderFlows()};
+$('#f-in').onclick=()=>{_flTab='in';$('#f-in').classList.add('active');$('#f-all').classList.remove('active');renderFlows()};
+
+// ---- pie: top devices by cumulative traffic
+async function loadPie(){
+ const r=await fetch('/api/state');const s=await r.json();
+ const ds=(s.devices||[]).map(d=>({n:d.hostname||d.vendor||d.ip,v:(d.rx_total||0)+(d.tx_total||0)}))
+  .sort((a,b)=>b.v-a.v).slice(0,7);
+ if(!ds.some(x=>x.v))ds.length=0,ds.push({n:'no traffic yet',v:1});
+ const rest=(s.devices||[]).reduce((a,d)=>a+(d.rx_total||0)+(d.tx_total||0),0)-ds.reduce((a,b)=>a+b.v,0);
+ pieChart.data.labels=ds.map(x=>x.n).concat(rest>1?['others']:[]);
+ pieChart.data.datasets[0].data=ds.map(x=>x.v).concat(rest>1?[rest]:[]);
+ pieChart.update('none');
+}
+
+// ---- router profiles dialog
+// Two clearly separate zones: the SAVED list (per-row Switch / Delete, the
+// active one marked "connected") and the ADD / UPDATE form below the divider.
+// Passwords are never fetched to the browser — Switch reconnects with the
+// profile's stored password server-side.
+window._prof={profiles:[],active:''};
+const escP=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+async function loadProf(){try{const p=await(await fetch('/api/profiles')).json();
+ if(p&&p.profiles)window._prof=p}catch(e){}return window._prof}
+function fillProf(){const p=window._prof,list=p.profiles||[];
+ $('#prof-list').innerHTML=list.length?list.map(x=>
+  `<div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:8px;padding:6px 10px">`+
+  `<div style="flex:1"><b>${escP(x.host)}</b>`+
+  `<div class="sub">${escP(x.user)}${x.name===p.active?' · <b style="color:#3fb950">connected</b>':''}</div></div>`+
+  (x.name===p.active?'':`<button class="btn p-use" data-name="${escP(x.name)}">Switch</button>`)+
+  `<button class="btn p-del" data-name="${escP(x.name)}" style="color:#ffb4ab;border-color:#6e2c2c">Delete</button></div>`
+  ).join('')
+  :'<div class="sub" style="padding:2px 2px 6px">No saved routers yet — add one below.</div>';
+ $('#prof-list').querySelectorAll('.p-use').forEach(el=>el.onclick=async()=>{
+   await fetch('/api/profiles/use',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({name:el.dataset.name})});
+   $('#authdlg').close();setTimeout(poll,600)});
+ $('#prof-list').querySelectorAll('.p-del').forEach(el=>el.onclick=async()=>{
+   const n=el.dataset.name,act=window._prof.active===n;
+   if(!confirm(act
+    ?`Delete profile "${n}" — it is the active router, so the dashboard will ask for credentials again (your dashboard login and history are kept).`
+    :`Delete saved profile "${n}"?`))return;
+   await fetch('/api/profiles/delete',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({name:n})});
+   if(act){$('#authdlg').close()}   // banner now offers the fresh credentials form
+   else{await loadProf();fillProf()}
+   setTimeout(poll,600)})}
+async function openCfg(){await loadProf();fillProf();
+ $('#a-host').value='';$('#a-user').value='';$('#a-pass').value='';
+ $('#authdlg').showModal()}
+$('#cfgbtn').onclick=openCfg;
+$('#a-close').onclick=()=>$('#authdlg').close();
+$('#a-save').onclick=async()=>{
+ const body={host:$('#a-host').value||'192.168.1.1',user:$('#a-user').value};
+ if($('#a-pass').value)body.password=$('#a-pass').value;   // saved under its host name
+ await fetch('/api/config',{method:'POST',headers:{'content-type':'application/json'},
+  body:JSON.stringify(body)});
+ $('#authdlg').close();setTimeout(poll,1500);};
+
+// ---- traffic analytics (ntopng-style: flows/hosts history, volume, protocols, ports, conversations)
+let aRange=360;
+const flowChart=new Chart($('#flowChart'),{type:'line',data:{datasets:[
+ {label:'Active flows',data:[],borderColor:'#4cc2ff',backgroundColor:'rgba(76,194,255,.10)',
+  fill:'origin',borderWidth:1.5,pointRadius:0,stepped:'middle',yAxisID:'y'},
+ {label:'Active local hosts',data:[],borderColor:'#a371f7',backgroundColor:'rgba(163,113,247,.08)',
+  fill:false,borderWidth:1.5,pointRadius:0,stepped:'middle',yAxisID:'y1'}]},
+ options:{responsive:true,animation:false,maintainAspectRatio:false,
+  interaction:{mode:'index',intersect:false},
+  scales:{x:{type:'time',time:{displayFormats:{hour:'HH:mm',minute:'HH:mm'}},ticks:{maxTicksLimit:8}},
+   y:{beginAtZero:true,position:'left',ticks:{precision:0}},
+   y1:{beginAtZero:true,position:'right',grid:{drawOnChartArea:false},ticks:{precision:0}}},
+  plugins:{legend:{labels:{boxWidth:12}}},parsing:false}});
+const protoChart=new Chart($('#protoChart'),{type:'doughnut',data:{labels:[],datasets:[
+ {data:[],backgroundColor:['#4cc2ff','#d29922','#f85149','#a371f7','#3fb950','#31445c'],borderWidth:0}]},
+ options:{plugins:{legend:{position:'right',labels:{boxWidth:10,font:{size:11}}}},
+  cutout:'62%',maintainAspectRatio:false}});
+async function loadAnalytics(){
+ try{
+  const a=await(await fetch('/api/analytics/history?range_min='+aRange)).json();
+  flowChart.data.datasets[0].data=a.flows.map(r=>({x:r[0]*1000,y:r[1]}));
+  flowChart.data.datasets[1].data=a.flows.map(r=>({x:r[0]*1000,y:r[2]}));
+  flowChart.update('none');
+  const pr=a.protocols.filter(p=>(p.rx+p.tx)>0);
+  protoChart.data.labels=pr.map(p=>p.key.toUpperCase());
+  protoChart.data.datasets[0].data=pr.map(p=>p.rx+p.tx);
+  protoChart.update('none');
+  const v=a.volume||{rx:0,tx:0};
+  $('#vol-lbl').textContent=`${fmtB(v.rx+v.tx)} total · ↓${fmtB(v.rx)} ↑${fmtB(v.tx)}`;
+  $('#ports-range-lbl').textContent=(document.querySelector('[data-arange].active')?.textContent)||'';
+  $('#portsbody').innerHTML=(a.ports||[]).length?a.ports.map(p=>
+    `<tr><td class="num" style="text-align:left">${esc(p.key)}</td>`+
+    `<td class="meta">${esc(p.svc||'')}</td>`+
+    `<td class="num"><span class="dl">${fmtB(p.rx)}↓</span> <span class="ul">${fmtB(p.tx)}↑</span></td>`+
+    `<td class="num">${p.flows}</td></tr>`).join('')
+    :'<tr><td colspan="4" class="sub">collecting first samples…</td></tr>';
+ }catch(e){$('#vol-lbl').textContent='analytics unavailable'}
+}
+function convRow(e){
+ const shown=(e.rx_bps+e.tx_bps)>500
+   ?`<span class="dl">${fmtBps(e.rx_bps)}↓</span> <span class="ul">${fmtBps(e.tx_bps)}↑</span>`
+   :`<span class="meta">idle</span>`;
+ const rname=e.remote_name||e.remote;
+ return `<tr><td><span class="host">${esc(e.lan_name||e.lan_ip)}</span>`+
+   `<div class="meta">${esc(e.lan_ip)}</div></td>`+
+   `<td class="meta">⇄</td>`+
+   `<td><span class="host">${esc(rname)}</span>`+
+   `${e.remote_name?`<div class="meta">${esc(e.remote)}</div>`:''}</td>`+
+   `<td><span class="fsvc">${esc(e.svc)}</span> <span class="fip">${esc(e.proto)}</span>`+
+   `${e.conns>1?` <span class="fip">×${e.conns}</span>`:''}</td>`+
+   `<td class="num">${shown}</td>`+
+   `<td class="num"><span class="dl">${fmtB(e.rx_total)}↓</span> <span class="ul">${fmtB(e.tx_total)}↑</span></td></tr>`;
+}
+async function loadConns(){
+ try{
+  const a=await(await fetch('/api/analytics/conns?limit=12')).json();
+  $('#convbody').innerHTML=(a.conversations||[]).length
+    ?a.conversations.map(convRow).join('')
+    :'<tr><td colspan="6" class="sub">no WAN connections in the table right now</td></tr>';
+ }catch(e){/* transient — next tick retries */}
+}
+document.querySelectorAll('[data-arange]').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('[data-arange]').forEach(x=>x.classList.remove('active'));
+ b.classList.add('active');aRange=+b.dataset.arange;loadAnalytics();});
+
+// ---- loop
+window.allowControl=false;
+poll();loadWan();loadPie();loadAnalytics();loadConns();
+setInterval(poll,3000);
+setInterval(loadWan,15000);
+setInterval(loadPie,60000);
+setInterval(loadAnalytics,30000);
+setInterval(loadConns,5000);
+setInterval(async()=>{ // refresh spark cache round-robin
+ const macs=[...new Set(devices.map(d=>d.mac))];
+ for(const mac of macs.slice(0,4))loadSpark(mac);
+},4000);
+</script>
+</body>
+</html>

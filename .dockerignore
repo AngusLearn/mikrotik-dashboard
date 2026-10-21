@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+**/__pycache__/
+tests/
+*.db
+*.db-wal
+*.db-shm
+*.log
+config.json
+config.json.template
+auth.json
+.git/
+data/
