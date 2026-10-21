@@ -55,6 +55,14 @@ history** (`history-<profile>.db`) — charts never mix two routers' data.
 
 ## Running in Docker (e.g. a Raspberry Pi)
 
+Fastest path on any SBC/NAS — pulls the published image, port 8899 pre-mapped:
+
+```bash
+curl -O https://raw.githubusercontent.com/AngusLearn/mikrotik-dashboard/main/docker-compose.public.yml
+mkdir -p data && sudo chown 1000:1000 data/
+docker compose -f docker-compose.public.yml up -d
+```
+
 Measured footprint: ~50-60 MB RAM, a few % CPU, image 141 MB (mostly the
 Python base). Runs fine on a Pi Zero 2 W; any 64-bit Pi OS works
 (`librouteros` is pure Python, `pydantic` ships arm64 wheels).
