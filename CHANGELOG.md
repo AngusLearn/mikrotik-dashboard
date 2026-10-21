@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-22
+19. **Batch #38 — traffic chart now live-pace** — the WAN/stack chart reloaded
+    only every 15 s while the map refreshed every 3 s, so it read as stale next
+    to the moving map dashes. `loadWan` now runs on the same 3 s tick (data was
+    already sampled every `interval_seconds`; only the browser poll was slow).
+    node --check on the extracted inline script; JS syntax OK.
+
 ## 2026-10-21
 18. **Batch #37 — Docker/Pi packaging** — app verified container-shaped: measured
     footprint is ~50-60 MB RSS, <5 % steady CPU, all state behind `$DASH_BASE`.
