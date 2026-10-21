@@ -60,7 +60,7 @@ Fastest path on any SBC/NAS — pulls the published image, port 8899 pre-mapped:
 
 ```bash
 curl -O https://raw.githubusercontent.com/AngusLearn/mikrotik-dashboard/main/docker-compose.public.yml
-mkdir -p data && sudo chown 1000:1000 data/
+mkdir -p data
 docker compose -f docker-compose.public.yml up -d
 ```
 
@@ -70,7 +70,7 @@ Python base). Runs fine on a Pi Zero 2 W; any 64-bit Pi OS works
 
 ```bash
 git clone <this repo> && cd mikrotik-dashboard
-mkdir -p data && sudo chown 1000:1000 data/
+mkdir -p data
 docker compose up -d --build        # or: podman-compose up -d --build
 # open http://<pi-ip>:8899 -> first-run setup wizard sets the login password,
 # then add your routers in the UI. To reuse an existing install instead,

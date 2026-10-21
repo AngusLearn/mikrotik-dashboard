@@ -10,5 +10,7 @@ services:
     ports:
       - "8899:8899"
     volumes:
-      - ./data:/data        # created on first up; chown 1000:1000 data/ if rootless issues
+      - ./data:/data        # created on first up; image runs as root so it
+                            # is writable without chown (unprivileged: add
+                            # user: "1000:1000" and chown the folder)
     restart: unless-stopped
