@@ -1,5 +1,7 @@
 # MikroTik LAN Monitor
 
+![Dashboard demo — all names, MACs, IPs and ports in this screenshot are synthetic](docs/screenshot.png)
+
 Live per-device traffic dashboard for a MikroTik router (RouterOS v6/v7).
 Dark web UI with: live download/upload charts, per-device real-time speed,
 cumulative totals, 15m–24h history, search/sort, sparklines, and optional
