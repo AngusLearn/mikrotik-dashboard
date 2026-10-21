@@ -1,0 +1,14 @@
+# Run the published image anywhere (RK3588, Pi, NAS):
+#   curl -O https://raw.githubusercontent.com/AngusLearn/mikrotik-dashboard/main/docker-compose.public.yml
+#   docker compose -f docker-compose.public.yml up -d
+name: mikrotik-dashboard
+
+services:
+  dashboard:
+    image: anguslearn/mikrotik-dashboard:latest
+    container_name: mikrotik-dashboard
+    ports:
+      - "8899:8899"
+    volumes:
+      - ./data:/data        # created on first up; chown 1000:1000 data/ if rootless issues
+    restart: unless-stopped
