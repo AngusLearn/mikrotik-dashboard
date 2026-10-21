@@ -1,0 +1,9 @@
+{
+  "host": "192.0.2.1",
+  "port": 8728,
+  "user": "",
+  "password": "",
+  "interval_seconds": 3,
+  "retention_hours": 48,
+  "allow_control": false
+}

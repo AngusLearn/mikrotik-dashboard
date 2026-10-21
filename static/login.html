@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login · MikroTik LAN Monitor</title>
+<style>
+:root{--bg:#0b0f14;--panel:#121821;--panel2:#0e141c;--border:#1e2936;--fg:#e6edf3;
+--muted:#8494a7;--accent:#4cc2ff;--red:#f85149;--radius:12px}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,"Segoe UI",Roboto,Ubuntu,sans-serif}
+.box{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+padding:26px 28px;width:min(360px,92vw)}
+h1{font-size:16px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:18px}
+input[type=password]{width:100%;background:var(--panel2);border:1px solid var(--border);
+color:var(--fg);border-radius:8px;padding:9px 12px;font-size:14px;margin-bottom:12px}
+button{width:100%;background:var(--accent);color:#04121e;border:0;border-radius:8px;
+padding:9px 12px;font-size:14px;font-weight:600;cursor:pointer}
+button:disabled{opacity:.5}
+#err{color:#ffb4ab;font-size:12px;min-height:16px;margin:8px 0 0}
+</style>
+</head>
+<body>
+<form class="box" id="f" autocomplete="off">
+  <h1>🧭 MikroTik LAN Monitor</h1>
+  <div class="sub">Enter the dashboard password to continue.</div>
+  <input type="password" id="pw" placeholder="password" autofocus>
+  <button type="submit" id="go">Log in</button>
+  <div id="err"></div>
+</form>
+<script>
+const $=s=>document.querySelector(s);
+$('#f').onsubmit=async e=>{
+  e.preventDefault();
+  const btn=$('#go');btn.disabled=true;$('#err').textContent='';
+  try{
+    const r=await fetch('/api/login',{method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({password:$('#pw').value})});
+    const d=await r.json().catch(()=>({}));
+    if(r.ok&&d.ok){location.assign('/');return}
+    $('#err').textContent=d.error||('HTTP '+r.status);
+  }catch(err){$('#err').textContent='backend unreachable'}
+  btn.disabled=false;
+};
+</script>
+</body>
+</html>

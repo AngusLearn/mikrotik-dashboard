@@ -1,0 +1,14 @@
+# NEVER commit: router credentials, dashboard login, telemetry
+config.json
+auth.json
+*.db
+*.db-wal
+*.db-shm
+server.log
+data/
+
+# build/runtime noise
+venv/
+__pycache__/
+*.pyc
+*.log
