@@ -34,12 +34,13 @@ protocol distribution for the range, top ports by traffic, and a live
 | `history.db` | traffic history (SQLite, auto-pruned after `retention_hours`) |
 | `start.bat` | Windows one-click launcher |
 
-## Quick start (Windows 11)
+## Quick start
 1. Install Python from python.org if you don't have it (tick **"Add python.exe to PATH"**).
 2. Double-click `start.bat`. Your browser opens http://localhost:8899
    (Windows may ask once to allow Python on private networks → Allow).
 3. The dashboard shows an orange banner → click **Enter credentials** and fill:
-   - Router IP: usually `192.168.1.1` (or `10.0.0.1` — whatever Winbox shows)
+   - Router IP: `192.168.88.1` is the MikroTik factory default; many networks
+     use `192.168.1.1` / `10.0.0.1` instead — whatever Winbox shows top-left
    - Username / password — see below for the recommended safe way.
 
 Switching to a different router (or a different router account) is done in
