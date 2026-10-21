@@ -1368,7 +1368,13 @@ def api_peers(ip: str, limit: int = 25):
 
 @app.on_event("startup")
 def _startup():
-    db_init()
+    try:
+        db_init()
+    except sqlite3.OperationalError as e:  # the most common container death:
+        raise RuntimeError(               # $DASH_BASE (/data) not writable ->
+            f"cannot open {DB_PATH}: {e}. Fix: the data dir must be writable "
+            "by uid 1000 (host: sudo chown -R 1000:1000 <data dir>, or pass "
+            "--user 0 when running the container)") from e
     threading.Thread(target=load_oui, daemon=True).start()
     monitor.start()
 

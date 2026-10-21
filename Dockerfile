@@ -13,7 +13,7 @@ RUN pip install -r requirements.txt
 COPY server.py .
 COPY static/ static/
 
-RUN useradd -r -u 1000 dash && mkdir -p /data
+RUN useradd -r -u 1000 dash && mkdir -p /data && chown 1000:1000 /data
 USER 1000
 EXPOSE 8899
 
