@@ -1,0 +1,33 @@
+name: build-and-push
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: anguslearn
+          password: '${{ secrets.DOCKER_PUSH }}'
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            anguslearn/mikrotik-dashboard:latest
+            anguslearn/mikrotik-dashboard:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
