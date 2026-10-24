@@ -169,7 +169,7 @@ svg text{user-select:none}
 </div>
 
 <div class="panel" style="margin-bottom:14px">
-  <h2>Network map <span class="sub" style="text-transform:none">moving dashes = live traffic · click a device for details</span></h2>
+  <h2>Network map <span class="sub" style="text-transform:none">moving dashes = live traffic · click a device for details</span><button class="btn" id="mapsort" title="Toggle device order: current speed ⇄ IP address" style="float:right;font-size:12px;padding:2px 10px">⇅ Speed</button></h2>
   <div class="mapwrap">
     <div id="topo"></div>
     <aside class="dpanel" id="devpanel">
@@ -406,6 +406,31 @@ function edgeD(x1,y1,x2,y2){const c=Math.max(40,(x2-x1)/2);
  return `M${x1},${y1} C${x1+c},${y1} ${x2-c},${y2} ${x2},${y2}`}
 // layout for the CURRENT order (the backend sorts devices by live rate, so the
 // order changes constantly; positions are derived, never baked into markup)
+// map device order: speed (server order, default) or ascending IP
+let mapSort = localStorage.getItem('mapSort') || 'speed';
+const _speedOrder = new WeakMap();   // group object -> pristine server (speed) order
+const ipNum = ip => ((ip || '').split('.').map(Number));
+const ipCmp = (a, b) => {
+  if (!a.ip || !b.ip) return (b.ip ? 1 : 0) - (a.ip ? 1 : 0);  // IP-less sort last
+  const A = ipNum(a.ip), B = ipNum(b.ip);
+  for (let i = 0; i < 4; i++) { const x = A[i] || 0, y = B[i] || 0; if (x !== y) return x - y; }
+  return 0;
+};
+function applyMapSort(t) {
+  for (const n of t.nets) for (const g of n.groups) {
+    // pristine server (speed) order, remembered per state object in a WeakMap
+    // (NOT on the group: a JSON-cloned state would carry a stale copy of that
+    // cache and silently veto the clone's own order)
+    if (!_speedOrder.has(g)) _speedOrder.set(g, g.devices);
+    g.devices = mapSort === 'ip' ? _speedOrder.get(g).slice().sort(ipCmp) : _speedOrder.get(g);
+  }
+}
+{ const b = $('#mapsort'), lbl = () => b.textContent = '⇅ ' + (mapSort === 'ip' ? 'IP' : 'Speed');
+  b.onclick = () => { mapSort = mapSort === 'ip' ? 'speed' : 'ip';
+    localStorage.setItem('mapSort', mapSort); lbl();
+    if (window._lastState) renderTopo(window._lastState); };
+  lbl(); }
+
 function topoLayout(s){
  const t=s.topo;
  const hasP=t.nets.some(n=>n.groups.some(g=>g.port));
@@ -541,6 +566,7 @@ function renderTopo(s){
   _topoSig='';cancelAnimationFrame(_tAnim);_tS=null;_tY=null;
   $('#topo').innerHTML='';_tm={};_te={};_tv={};_tnl=[];_wl=null;return}
  const spd={};(s.devices||[]).forEach(d=>spd[d.mac]=d);
+ applyMapSort(t);   // honour the Speed/IP toggle before layout/rebuild
  // STRUCTURE only (device set / names / ports), deliberately order-insensitive:
  // a speed reorder must tween, not rebuild
  const sig=t.nets.map(n=>n.label+':'+n.groups.map(g=>g.port+'|'+

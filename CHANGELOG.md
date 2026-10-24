@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-10-24
+22. **Batch #41 — network-map Speed/IP sort toggle** — the map always ordered
+    devices by live rate, which churns every poll and makes a specific device
+    hard to find. New `⇅ Speed / ⇅ IP` button in the map header switches
+    ordering within each network/port group between server (speed) order and
+    ascending IPv4 (IP-less devices sort last); the choice persists in
+    `localStorage` and re-renders the current state immediately, so the swap
+    uses the existing tween. The pristine speed order is remembered per state
+    object in a `WeakMap` (not on the group object: a JSON-cloned state would
+    carry a stale copy of that cache and silently veto the clone's own order —
+    exactly what broke `test_map_reorder_browser.py` on first attempt). New
+    `tests/test_mapsort_browser.py` (freezes the page poll timers so the
+    server's per-poll speed churn cannot make the toggle-back assertion a
+    coin flip; asserts IP sort per group, rendered y order, toggle-back to the
+    pristine order, and localStorage persistence across reload). Also fixed
+    `tests/test_peers_unit.py`, which still hardcoded the pre-move repo path
+    (`~/mikrotik-dashboard`) and died with FileNotFoundError. Verified:
+    test_mapsort_browser ALL PASS, test_map_reorder_browser ALL PASS (normal +
+    reduced motion), test_device_panel_browser ALL PASS, test_flows_browser
+    ALL PASS, test_peers_unit + test_prune_unit ALL PASS, node --check on the
+    extracted inline script.
+
 ## 2026-10-22
 21. **Batch #40 — image runs as root inside the container** — Portainer-created
     bind mounts are root-owned, so the uid-1000 image kept dying with

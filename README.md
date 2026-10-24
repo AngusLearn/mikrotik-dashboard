@@ -21,6 +21,9 @@ reverse-DNS name) with a separate **Accessing you** tab for inbound callers.
 In the network map, devices stay ordered
 busiest-first and **glide to their new row** when the traffic order changes
 (~0.4 s; nothing jumps, and it stays still if your OS asks for reduced motion).
+The map header's **⇅ Speed / ⇅ IP** button switches device ordering between
+live rate (default) and ascending IP address; the choice is remembered per
+browser and applies inside each network/port group.
 Below the map, **traffic analytics** panels give an ntopng-style overview:
 active-flows & active-hosts history (1h/6h/24h), exact traffic volume +
 protocol distribution for the range, top ports by traffic, and a live

@@ -1,7 +1,8 @@
 """Unit test of device_peers() semantics with synthetic conntrack rows."""
-import sys, importlib.util, types
+import os, sys, importlib.util, types
 
-spec = importlib.util.spec_from_file_location("srv", "/home/angus/mikrotik-dashboard/server.py")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+spec = importlib.util.spec_from_file_location("srv", os.path.join(_HERE, "..", "server.py"))
 srv = importlib.util.module_from_spec(spec)
 sys.modules["srv"] = srv
 spec.loader.exec_module(srv)
