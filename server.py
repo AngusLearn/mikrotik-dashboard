@@ -265,6 +265,7 @@ def db_prune(retention_hours: float) -> None:
 STATE = {
     "connected": False,
     "last_error": None,
+    "stale": False,
     "updated": 0.0,
     "system": {},
     "wan": {},
@@ -338,6 +339,10 @@ class RouterMonitor(threading.Thread):
         self.lock = threading.Lock()
         self.stop_flag = threading.Event()
         self.err_count = 0
+        # last-good snapshot per API path: under router load a failed print
+        # must NEVER blank STATE — we serve the previous rows instead
+        self._last_ok: dict = {}
+        self.poll_degraded = False
 
     # ----- connection -----------------------------------------------------
     def connect(self):
@@ -370,29 +375,66 @@ class RouterMonitor(threading.Thread):
             pass
         self.api = None
 
+    def reset(self):
+        """Drop + forget the last-good cache. Used whenever the target router
+        or its credentials change: the new connection must never be served
+        the previous router's cached rows as if they were fresh."""
+        self.drop()
+        self._last_ok.clear()
+        self.last_conns = None
+        self.prev_wan = None
+        self.poll_degraded = False
+
+    def fetch(self, api, path: str, critical: bool = False):
+        """Print with last-good cache. A failed fetch under router load must
+        never blank STATE: serve the previous rows and mark the cycle
+        degraded. run() then drops the socket — a librouteros stream that
+        timed out mid-print stays desynced, so every later fetch would fail
+        too (empty dashboard that never recovers without a restart). With no
+        cached rows, a failed critical path raises so run() treats the cycle
+        as a disconnect."""
+        rows = api_fetch_all(api, path)
+        if rows is not None:
+            self._last_ok[path] = rows
+            return rows
+        self.poll_degraded = True
+        cached = self._last_ok.get(path)
+        if cached is not None:
+            return cached
+        if critical:
+            raise RuntimeError(f"router busy: {path} fetch failed")
+        return []
+
     def conns(self, api):
-        """Conntrack fetch with history: RouterOS traps mid-print when the
-        table churns; if all retries fail, reuse the last good snapshot so
-        per-device rates hold instead of collapsing to zero under load."""
-        conns = api_fetch_all(api, "/ip/firewall/connection")
-        if conns is None:
-            return self.last_conns or []
-        self.last_conns = conns
-        return conns
+        """Conntrack fetch: RouterOS traps mid-print when the table churns;
+        on failure the cached snapshot keeps per-device rates instead of
+        collapsing to zero under load. Also kept on self for the peers/conns
+        request handlers (they must not touch the live API connection)."""
+        rows = self.fetch(api, "/ip/firewall/connection")
+        self.last_conns = rows
+        return rows
 
     # ----- main loop ------------------------------------------------------
     def run(self):
         while not self.stop_flag.is_set():
             t0 = time.time()
             cfg = load_config()
+            self.poll_degraded = False
             try:
                 self.ensure()
                 self.poll(cfg)
                 self.err_count = 0
                 with _state_lock:
                     STATE["connected"] = True
-                    STATE["last_error"] = None
-                    STATE["updated"] = time.time()
+                    STATE["stale"] = self.poll_degraded
+                    STATE["last_error"] = (
+                        "router busy — showing last known data"
+                        if self.poll_degraded else None)
+                    if not self.poll_degraded:
+                        STATE["updated"] = time.time()
+                if self.poll_degraded:
+                    log.warning("degraded poll — forcing fresh connection")
+                    self.drop()   # stale-but-real data served, retry on a clean socket
             except Exception as e:
                 self.err_count += 1
                 msg = str(e) or e.__class__.__name__
@@ -414,7 +456,7 @@ class RouterMonitor(threading.Thread):
         now = time.time()
 
         # ---- system info
-        res = (api_fetch_all(api, "/system/resource") or [{}])[0]
+        res = (self.fetch(api, "/system/resource", critical=True) or [{}])[0]
         system = {
             "board": res.get("board-name", ""),
             "version": re.split(r"\s+\(", res.get("version", ""))[0],
@@ -426,8 +468,8 @@ class RouterMonitor(threading.Thread):
         }
 
         # ---- interfaces + byte counters
-        ifaces = api_fetch_all(api, "/interface") or []
-        routes = api_fetch_all(api, "/ip/route") or []
+        ifaces = self.fetch(api, "/interface", critical=True)
+        routes = self.fetch(api, "/ip/route", critical=True)
         wan_names = []
         wan_ip = ""
         for r in routes:
@@ -441,7 +483,7 @@ class RouterMonitor(threading.Thread):
         wan_names = wan_names or ["ether1"]
 
         running_rate = {}
-        eth = api_fetch_all(api, "/interface/ethernet") or []
+        eth = self.fetch(api, "/interface/ethernet")
         for e in eth:
             rate = e.get("rate") or e.get("tx-rate") or ""
             if rate:
@@ -465,7 +507,8 @@ class RouterMonitor(threading.Thread):
                 )
         wan_ip_local = ""
         own_ips = set()
-        for a in (api_fetch_all(api, "/ip/address") or []):
+        addr_rows = self.fetch(api, "/ip/address")
+        for a in addr_rows:
             addr = a.get("address", "").split("/")[0]
             if addr:
                 own_ips.add(addr)
@@ -495,7 +538,7 @@ class RouterMonitor(threading.Thread):
         # ---- device inventory: ARP + DHCP leases
         macinfo: dict = {}  # mac -> {...}
         ip2mac: dict = {}
-        for a in (api_fetch_all(api, "/ip/arp") or []):
+        for a in self.fetch(api, "/ip/arp"):
             mac = a.get("mac-address", "")
             ip = a.get("address", "")
             if not mac or not ip:
@@ -513,7 +556,7 @@ class RouterMonitor(threading.Thread):
             d["via"] = d["via"] or a.get("interface", "")
             if a.get("hostname"):
                 d["hostname"] = a["hostname"]
-        for l in (api_fetch_all(api, "/ip/dhcp-server/lease") or []):
+        for l in self.fetch(api, "/ip/dhcp-server/lease"):
             mac = l.get("mac-address", "")
             ip = l.get("address", "")
             if not mac:
@@ -526,7 +569,7 @@ class RouterMonitor(threading.Thread):
                 d["hostname"] = l["host-name"].replace("\\22", "").replace('"', "")
             d["via"] = d["via"] or l.get("interface", "")
         # neighbours (non-IP devices still show)
-        for n in (api_fetch_all(api, "/ip/neigh") or []):
+        for n in self.fetch(api, "/ip/neigh"):
             mac = n.get("mac-address", "")
             if mac and n.get("interface"):
                 d = macinfo.setdefault(mac, {"mac": mac, "ips": set(), "hostname": "", "via": ""})
@@ -537,7 +580,7 @@ class RouterMonitor(threading.Thread):
         # names still win when present. A box may answer ND with a different MAC
         # (bridge vs radio) than the one holding the DHCP lease, so the
         # management IP decides which entry gets the name.
-        for n in (api_fetch_all(api, "/ip/neighbor") or []):
+        for n in self.fetch(api, "/ip/neighbor"):
             mac = n.get("mac-address", "")
             if not mac:
                 continue
@@ -585,7 +628,7 @@ class RouterMonitor(threading.Thread):
 
         # ---- routed subnets (VLANs) from /ip/address
         nets = []
-        for a in (api_fetch_all(api, "/ip/address") or []):
+        for a in addr_rows:
             try:
                 net = ipaddress.ip_network(a.get("address", ""), strict=False)
                 nets.append((net, a.get("interface", "") or str(net)))
@@ -788,7 +831,7 @@ class RouterMonitor(threading.Thread):
 
         # ---- blocked devices
         blocked_ips = set()
-        for e in (api_fetch_all(api, "/ip/firewall/address-list") or []):
+        for e in self.fetch(api, "/ip/firewall/address-list"):
             if e.get("list") == cfg.get("block_list_name", "DASH_BLOCKED"):
                 blocked_ips.add(e.get("address", ""))
         for dev in devices_out:
@@ -1385,6 +1428,7 @@ def api_state():
         return {
             "connected": STATE["connected"],
             "last_error": STATE["last_error"],
+            "stale": STATE["stale"],
             "updated": STATE["updated"],
             "system": STATE["system"],
             "wan": STATE["wan"],
@@ -1622,7 +1666,7 @@ async def api_profiles_use(request: Request):
             cfg[k] = prof[k]
     cfg["active"] = name
     save_config(cfg)  # save_config chmods 600; never log secrets
-    monitor.drop()  # next cycle reconnects to the selected router
+    monitor.reset()  # next cycle reconnects to the selected router
     _clear_display(f"connecting to {prof.get('host', '')}…")
     return {"ok": True, "active": name}
 
@@ -1641,7 +1685,7 @@ async def api_profiles_delete(request: Request):
     cfg["active"] = ""
     if was_active:  # active creds go with it: dashboard returns to setup state
         cfg["host"], cfg["user"], cfg["password"] = DEFAULT_CONFIG["host"], "", ""
-        monitor.drop()
+        monitor.reset()
         with _state_lock:
             STATE["config"] = {}  # else the dialog keeps pre-filling the old router
         _clear_display("router credentials not configured")
@@ -1664,7 +1708,7 @@ async def api_config(request: Request):
     cfg.setdefault("profiles", {})[name] = {k: cfg.get(k) for k in _PROFILE_KEYS}
     cfg["active"] = name
     save_config(cfg)  # save_config chmods 600; never log secrets
-    monitor.drop()  # reconnect with the new credentials on next cycle
+    monitor.reset()  # reconnect with the new credentials on next cycle
     if changed_conn:
         _clear_display("connecting to the new router…")
     return {"ok": True}
@@ -1682,7 +1726,7 @@ async def api_config_forget():
     cfg["active"] = ""
     cfg["host"], cfg["user"], cfg["password"] = DEFAULT_CONFIG["host"], "", ""
     save_config(cfg)  # drops the active profile; save_config chmods 600
-    monitor.drop()
+    monitor.reset()
     with _state_lock:
         STATE["config"] = {}
     _clear_display("router credentials not configured — "

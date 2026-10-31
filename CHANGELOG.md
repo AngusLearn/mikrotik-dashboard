@@ -1,6 +1,30 @@
 # Changelog
 
-## 2026-10-24
+## 2026-10-31
+1. **Batch #42 — survives router overload; last-known data instead of a blank
+   dashboard** — a busy router (large downloads saturating the CPU) made the
+   API prints time out; every failed print returned `None` and callers wrote
+   `or []`, so STATE was overwritten with empty lists while `connected` stayed
+   `true`: devices, WAN and charts all went blank, and because no exception
+   propagated the half-dead librouteros socket was never dropped, so the empty
+   state persisted until a restart or profile switch (manual browser refreshes
+   changed nothing). `RouterMonitor.fetch()` now caches last-good rows per API
+   path: a failed print serves the previous rows and marks the cycle
+   `degraded`; the run loop then drops the socket so the next cycle starts on
+   a clean connection. `/system/resource`, `/interface` and `/ip/route` are
+   critical: failing without a cache raises and is treated as a real
+   disconnect (banner + backoff) instead of fake zeros. `/api/state` gained a
+   `stale` flag; the UI keeps the last data on screen and shows an amber
+   "⚠ router busy, showing last data" next to the updated timestamp.
+   `monitor.reset()` (profile switch/delete/forget/config change) also clears
+   the cache so a new router is never served the previous router's rows.
+   `STATE["updated"]` no longer advances on degraded polls, so the timestamp
+   tells how old the visible data really is. New `tests/test_stale_unit.py`
+   (synthetic failing API: cache hit on failure, degraded flag, critical raise
+   without cache, reset forgets cache). Verified: test_stale_unit ALL PASS,
+   test_peers_unit ALL PASS, test_prune_unit ALL PASS; deployed to the RK3588
+   instance and observed through a normal poll cycle (`connected`, non-empty
+   devices, `stale: false` in `/api/state`).
 22. **Batch #41 — network-map Speed/IP sort toggle** — the map always ordered
     devices by live rate, which churns every poll and makes a specific device
     hard to find. New `⇅ Speed / ⇅ IP` button in the map header switches
