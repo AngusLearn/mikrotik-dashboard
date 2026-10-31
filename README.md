@@ -5,7 +5,10 @@
 Live per-device traffic dashboard for a MikroTik router (RouterOS v6/v7).
 Dark web UI with: live download/upload charts, per-device real-time speed,
 cumulative totals, 15m–24h history, search/sort, sparklines, and optional
-one-click internet pause/resume per device (off by default). Device names come
+one-click internet pause/resume per device (off by default). When the router is
+too busy to answer (heavy downloads), the dashboard keeps the last known data
+on screen with an amber "router busy" note instead of going blank, reconnects
+by itself and recovers without any manual refresh. Device names come
 from DHCP leases and ARP, with **MikroTik Neighbor Discovery** identity as a
 fallback — so Mikrotik APs/switches without DHCP leases still show by their
 router identity, together with their **board name** (the CLI `BOARD` column,

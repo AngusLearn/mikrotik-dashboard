@@ -598,7 +598,8 @@ async function poll(){
  $('#subinfo').textContent=s.connected?
   `${wa.ifaces?.[0]?.name||''}${wa.ifaces?.[0]?.rate?' @ '+wa.ifaces[0].rate:''} · gw ${wa.gw||'—'}`
   +(s.wifi&&s.wifi.length?` · 📶 ${(s.wifi||[]).reduce((a,r)=>a+(r.stations||0),0)} WiFi`:''):'not connected';
- $('#lastpoll').textContent=s.updated?'updated '+new Date(s.updated*1000).toLocaleTimeString():'';
+ $('#lastpoll').textContent=s.updated?'updated '+new Date(s.updated*1000).toLocaleTimeString()+(s.stale?' · ⚠ router busy, showing last data':''):'';
+ $('#lastpoll').style.color=s.stale?'#d29922':'';
  $('#c-dl').innerHTML=fmtBps(t.wan_rx_bps).replace(' ',' <small>');
  $('#c-ul').innerHTML=fmtBps(t.wan_tx_bps).replace(' ',' <small>');
  $('#c-dev').textContent=`${t.devices_online??'—'} / ${t.devices_total??'—'}`;
