@@ -1,6 +1,25 @@
 # Changelog
 
 ## 2026-10-31
+2. **Batch #43 — "Devices online" counts presence, not DHCP leases** — the
+   card's numerator was `online = bool(ips)`: any device holding an IP from
+   ANY inventory source (ARP, DHCP lease, MNDP management IP, WiFi last-ip,
+   conntrack) counted as online, so a laptop asleep in a bag stayed "online"
+   for as long as its lease was valid (hours; our own instance showed
+   29/29 — the number could literally never drop). Presence now requires
+   proof that the box is there *right now*: a live ARP entry, an active WiFi
+   association (registration table), a MikroTik neighbor beacon, or more
+   than `ONLINE_MIN_BPS` (1 kbps) of current WAN traffic — computed by the
+   new `device_present()` helper and unit-tested. Devices with only a lease
+   remain in the list (with their lease IP) and still count in the
+   denominator; MNDP MACs match case-insensitively because the beacon MAC
+   can differ from the lease MAC and RouterOS varies the case; a WiFi
+   association also flips an existing device online even when its ARP entry
+   expired. Hovering the card explains the rule. New `tests/test_online_unit.py`
+   (lease-only is NOT present; ARP/traffic/MNDP/association are; threshold
+   boundary; case-insensitive MACs). Verified: test_online_unit ALL PASS,
+   test_stale_unit ALL PASS, test_peers_unit ALL PASS, test_prune_unit ALL
+   PASS; deployed to the RK3588 and compared before/after totals live.
 1. **Batch #42 — survives router overload; last-known data instead of a blank
    dashboard** — a busy router (large downloads saturating the CPU) made the
    API prints time out; every failed print returned `None` and callers wrote

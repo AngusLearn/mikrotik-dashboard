@@ -326,6 +326,21 @@ def human_bytes(n: float) -> str:
         n /= 1024
 
 
+ONLINE_MIN_BPS = 1000  # live WAN traffic that counts as proof of presence
+
+
+def device_present(mac, ips, rate_bps, arp_ips, mndp_macs, associated=False):
+    """Presence test behind the 'online' counter. A DHCP lease is NOT proof
+    of presence — it survives for hours after the device left. Real proofs:
+    a live ARP entry, an active WiFi association (registration table), a
+    MikroTik neighbor beacon (the box is answering right now), or current
+    WAN traffic."""
+    return (associated
+            or mac.upper() in mndp_macs
+            or any(ip in arp_ips for ip in ips)
+            or rate_bps > ONLINE_MIN_BPS)
+
+
 class RouterMonitor(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True, name="router-sampler")
@@ -538,6 +553,8 @@ class RouterMonitor(threading.Thread):
         # ---- device inventory: ARP + DHCP leases
         macinfo: dict = {}  # mac -> {...}
         ip2mac: dict = {}
+        arp_ips: set = set()    # IPs seen in ARP right now (presence proof)
+        mndp_macs: set = set()  # MACs that answered MikroTik neighbor
         for a in self.fetch(api, "/ip/arp"):
             mac = a.get("mac-address", "")
             ip = a.get("address", "")
@@ -552,6 +569,7 @@ class RouterMonitor(threading.Thread):
                 continue
             d = macinfo.setdefault(mac, {"mac": mac, "ips": set(), "hostname": "", "via": ""})
             d["ips"].add(ip)
+            arp_ips.add(ip)
             ip2mac[ip] = mac
             d["via"] = d["via"] or a.get("interface", "")
             if a.get("hostname"):
@@ -584,6 +602,7 @@ class RouterMonitor(threading.Thread):
             mac = n.get("mac-address", "")
             if not mac:
                 continue
+            mndp_macs.add(mac.upper())
             ident = str(n.get("identity") or n.get("name") or "")
             via = str(n.get("interface", "") or "")
             fw = re.split(r"\s+\(", str(n.get("version", "") or ""))[0]
@@ -612,6 +631,7 @@ class RouterMonitor(threading.Thread):
             if d is None:
                 target, d = mac, macinfo.setdefault(
                     mac, {"mac": mac, "ips": set(), "hostname": "", "via": ""})
+            mndp_macs.add(target.upper())  # lease-MAC may differ from beacon-MAC
             if ident and not d["hostname"]:
                 d["hostname"] = ident
             if not d["via"]:
@@ -750,9 +770,7 @@ class RouterMonitor(threading.Thread):
             rx_bps = sum(dev_rate.get(x, [0, 0, 0, 0, 0])[0] for x in ips)
             tx_bps = sum(dev_rate.get(x, [0, 0, 0, 0, 0])[1] for x in ips)
             conns = sum(dev_rate.get(x, [0, 0, 0, 0, 0])[2] for x in ips)
-            active = (rx_bps + tx_bps) > 1000 or len(ips) > 0 and any(
-                x in ip2mac for x in ips
-            )
+            online = device_present(mac, ips, rx_bps + tx_bps, arp_ips, mndp_macs)
             devices_out.append(
                 {
                     "mac": mac,
@@ -766,7 +784,7 @@ class RouterMonitor(threading.Thread):
                     "rx_bps": round(rx_bps, 1),
                     "tx_bps": round(tx_bps, 1),
                     "connections": conns,
-                    "online": bool(ips),
+                    "online": online,
                     "net": net_of(ip),
                 }
             )
@@ -803,6 +821,7 @@ class RouterMonitor(threading.Thread):
             a = wifi_assoc.get((dev.get("mac") or "").upper())
             if a:
                 dev["wlan"] = a
+                dev["online"] = True       # associated on a radio right now
                 if not dev["ip"] and a.get("ip"):     # bridge AP: ARP is empty,
                     dev["ip"] = a["ip"]              # but last-ip tells us who
                     dev["ips"] = [a["ip"]]           # this station is
