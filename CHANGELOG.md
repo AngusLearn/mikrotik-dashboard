@@ -1,6 +1,15 @@
 # Changelog
 
 ## 2026-11-05
+4. **CPU / Memory card: dual load bars** — the card used one shared gauge
+   for `cpu% / mem%`, which read wrong (a bar can't show two numbers). Now
+   two labelled rows — `CPU ▓▓░ 34%`, `MEM ▓░░ 11%` — each colored by
+   load: green <50%, amber 50–79%, red ≥80% (existing --dl/--ul/--red
+   tokens), with a width transition. Carried in from a sibling session's
+   uncommitted working-tree edit, re-verified here (JS `node --check` OK,
+   no stale single-bar refs).
+
+## 2026-11-05
 3. **Batch #46 — DHCP pool dropdown** — the DHCP leases card is now a
    click-to-expand dropdown: a caret on the card toggles a themed popup
    (`#lease-pop`) with one line per live pool — name, address range,
