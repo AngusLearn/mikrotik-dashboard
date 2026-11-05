@@ -579,6 +579,10 @@ function liveTopo(s,spd){
  for(const n of _tnl){const v=(s.nets||{})[n.label];if(v&&n.dl){
    n.dl.textContent='↓'+fmtBps(v.rx_bps);n.ul.textContent=' ↑'+fmtBps(v.tx_bps);
    setE('net:'+n.label,v.rx_bps+v.tx_bps)}}
+ // hub -> port edges flow at the summed rate of the devices behind that port
+ for(const n of (s.topo&&s.topo.nets)||[])for(const g of n.groups){if(!g.port)continue;
+   let bps=0;for(const d of g.devices){const sp=spd[d.mac];if(sp)bps+=sp.rx_bps+sp.tx_bps}
+   setE('via:port:'+n.label+':'+g.port,bps)}
  for(const[mac,d]of Object.entries(spd)){const m=_tm[mac];if(!m||!m.dl)continue;
   m.dl.textContent=' ↓'+fmtBps(d.rx_bps);m.ul.textContent=' ↑'+fmtBps(d.tx_bps);
   // rates can lengthen the row after the build-time fit (0 bps -> 940 Mbps)
