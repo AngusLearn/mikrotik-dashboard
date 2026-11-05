@@ -277,7 +277,6 @@ STATE = {
     "wifi": [],
     "health": [],
     "pools": [],
-    "leases": [],
 }
 _state_lock = threading.Lock()
 
@@ -643,21 +642,11 @@ class RouterMonitor(threading.Thread):
             d["via"] = d["via"] or a.get("interface", "")
             if a.get("hostname"):
                 d["hostname"] = a["hostname"]
-        leases = []
         for l in self.fetch(api, "/ip/dhcp-server/lease"):
             mac = l.get("mac-address", "")
             ip = l.get("address", "")
             if not mac:
                 continue
-            if ip:
-                leases.append({
-                    "ip": ip, "mac": mac,
-                    "host": (l.get("host-name") or "").replace("\\22", "").replace('"', ""),
-                    "server": l.get("server", ""),
-                    "status": l.get("status", ""),
-                    "expires": l.get("expires-after", "") or "",
-                    "last_seen": l.get("last-seen", "") or "",
-                })
             d = macinfo.setdefault(mac, {"mac": mac, "ips": set(), "hostname": "", "via": ""})
             if ip:
                 d["ips"].add(ip)
@@ -665,13 +654,6 @@ class RouterMonitor(threading.Thread):
             if l.get("host-name"):
                 d["hostname"] = l["host-name"].replace("\\22", "").replace('"', "")
             d["via"] = d["via"] or l.get("interface", "")
-        # bound first, then by IP so the dropdown reads like the DHCP table;
-        # never trust 'address' to be a clean IPv4 — non-numeric octets sort last
-        def _ipkey(ip):
-            p = ip.split(".")
-            return tuple(int(o) if o.isdigit() else 999 for o in p) \
-                if len(p) == 4 else (999, 999, 999, 999)
-        leases.sort(key=lambda x: (x["status"] != "bound", _ipkey(x["ip"])))
         # neighbours (non-IP devices still show)
         for n in self.fetch(api, "/ip/neigh"):
             mac = n.get("mac-address", "")
@@ -986,7 +968,8 @@ class RouterMonitor(threading.Thread):
         for p in api_fetch_all(api, "/ip/pool") or []:
             used, avail = int(as_num(p.get("used"), 0)), int(as_num(p.get("available"), 0))
             if used + avail > 0 and (p.get("name", "") in dhcp_pools or used > 0):
-                pools.append({"name": p.get("name", ""), "used": used, "avail": avail})
+                pools.append({"name": p.get("name", ""), "used": used,
+                              "avail": avail, "ranges": p.get("ranges", "")})
 
         # ---- blocked devices
         blocked_ips = set()
@@ -1117,7 +1100,6 @@ class RouterMonitor(threading.Thread):
             STATE["wifi"] = wifi_out
             STATE["health"] = health
             STATE["pools"] = pools
-            STATE["leases"] = leases
         STATE["config"] = {
             "host": cfg["host"],
             "user": cfg.get("user", ""),
@@ -1612,7 +1594,6 @@ def api_state():
             "wifi": STATE.get("wifi", []),
             "health": STATE.get("health", []),
             "pools": STATE.get("pools", []),
-            "leases": STATE.get("leases", []),
             "topo": STATE["topo"],
             "config": STATE["config"] or {"host": load_config()["host"]},
         }
@@ -1809,7 +1790,7 @@ def _clear_display(msg: str) -> None:
         STATE.update({"connected": False, "last_error": msg, "updated": 0.0,
                       "system": {}, "wan": {}, "devices": [], "totals": {},
                       "nets": {}, "topo": {}, "wifi": [],
-                      "health": [], "pools": [], "leases": []})
+                      "health": [], "pools": []})
 
 
 def _sync_profiles(cfg: dict) -> dict:
