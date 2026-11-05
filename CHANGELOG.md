@@ -1,6 +1,14 @@
 # Changelog
 
 ## 2026-11-05
+8. **Dark scrollbars** — the flow panel / map / page scrollbars rendered in
+   the OS light theme because no page declared `color-scheme: dark`; the
+   browser kept native light widgets over a dark page. All three pages
+   (dashboard, login, setup) now declare the scheme, and the dashboard adds
+   thin dark-styled scrollbars (webkit + Firefox scrollbar-color) matching
+   the panel palette. CSS only.
+
+## 2026-11-05
 7. **Ports map: flow animation on hub->port edges** — the new edges were
    wired geometrically but not into liveTopo's per-edge rate loop, so they
    stayed static while device edges flowed. Each hub->port edge now flows
