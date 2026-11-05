@@ -1,20 +1,17 @@
 # Changelog
 
 ## 2026-11-05
-3. **Batch #46 — DHCP lease dropdown** — the DHCP leases card is now a
+3. **Batch #46 — DHCP pool dropdown** — the DHCP leases card is now a
    click-to-expand dropdown: a caret on the card toggles a themed popup
-   (`#lease-pop`) headed by the per-pool `used / total` split, listing every
-   `/ip/dhcp-server/lease` row — bound leases as green dots with
-   `expires in`, stale `waiting`/`binding` entries greyed with their
-   `last-seen` idle time, plus IP, hostname, MAC. Data comes free: the poll
-   loop already fetched the lease table for the device inventory, so
-   `STATE["leases"]` piggybacks on that call (zero extra RouterOS requests);
-   bound-first then numeric-IP sort; `leases` joins STATE init,
-   profile-switch clear and `/api/state` like health/pools. All hostname/
-   MAC fields rendered through `esc()`. Closes on outside click, caret
-   re-click or Esc; content live-refreshes while open. Verified: live smoke —
-   25 lease rows (11 bound, e.g. `192.168.1.2 Pixel-8-Pro expires 1h8m28s`),
-   exposed on `/api/state`; all unit suites PASS; JS `node --check` OK.
+   (`#lease-pop`) with one line per live pool — name, address range,
+   `used / total` (amber when that pool is >90%). On this router that is
+   exactly the two LAN pools: `dhcp` 192.168.1.2-253 (VLAN 1) and
+   `dhcp_vlan2` 192.168.3.100-200 (VLAN 2); orphan pools stay filtered as
+   in #45. Ranges ride along in `STATE["pools"]` (one extra field on the
+   `/ip/pool` rows already polled). Closes on outside click, caret re-click
+   or Esc; content live-refreshes while open. Verified: live smoke —
+   `[dhcp 192.168.1.2-253 11/252, dhcp_vlan2 192.168.3.100-200 1/101]`,
+   orphan `Server` absent; all unit suites PASS; JS `node --check` OK.
 
 ## 2026-11-05
 2. **Batch #45 — router health chip, DHCP pool headroom, honest Torch notes,

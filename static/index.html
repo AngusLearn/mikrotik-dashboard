@@ -145,8 +145,8 @@ svg text{user-select:none}
     <div class="gauge"><i id="g-cpu" style="width:0%"></i></div></div>
   <div class="card"><div class="k">Uptime</div><div class="v" id="c-up" style="font-size:15px">—</div></div>
   <div class="card" id="card-health" hidden title="router hardware sensors (/system/health — availability depends on the board)"><div class="k">Router health</div><div class="v" id="c-health" style="font-size:15px">—</div></div>
-  <div class="card" id="card-pools" hidden style="cursor:pointer;position:relative" title="DHCP address pools (/ip/pool): leases in use / total capacity — amber when any pool is over 90% full. Click to expand the lease list."><div class="k">DHCP leases <span id="pools-caret" style="float:right">▾</span></div><div class="v" id="c-pools" style="font-size:15px">—</div>
-    <div id="lease-pop" hidden style="position:absolute;top:calc(100% + 6px);left:0;z-index:40;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 28px rgba(0,0,0,.5);padding:10px 12px;min-width:430px;max-width:min(560px,92vw);max-height:340px;overflow:auto;font-size:12.5px;cursor:auto"></div>
+  <div class="card" id="card-pools" hidden style="cursor:pointer;position:relative" title="DHCP address pools (/ip/pool): leases in use / total capacity — amber when any pool is over 90% full. Click to list the pools."><div class="k">DHCP leases <span id="pools-caret" style="float:right">▾</span></div><div class="v" id="c-pools" style="font-size:15px">—</div>
+    <div id="pools-pop" hidden style="position:absolute;top:calc(100% + 6px);left:0;z-index:40;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 28px rgba(0,0,0,.5);padding:10px 12px;min-width:430px;max-width:min(560px,92vw);max-height:340px;overflow:auto;font-size:12.5px;cursor:auto"></div>
   </div>
 </div>
 
@@ -624,8 +624,8 @@ async function poll(){
    const worst=Math.max(...ps.map(p=>p.used+p.avail?p.used/(p.used+p.avail):0));
    cp.textContent=`${u} / ${t}`;cp.style.color=worst>0.9?'#d29922':'';
    const NL=String.fromCharCode(10);
-   cp.parentElement.title=ps.map(p=>`${p.name}: ${p.used} / ${p.used+p.avail}`).join(NL)+NL+'click to expand the lease list';
-   if(_leasesOpen)renderLeasePop(ps,s.leases||[]);}}
+   cp.parentElement.title=ps.map(p=>`${p.name}: ${p.used} / ${p.used+p.avail}`).join(NL)+NL+'click to expand the pool list';
+   if(_poolsOpen)renderPoolPop(ps);}}
  $('#fh-now').textContent=`· now: ${t.flows??'—'} flows · ${t.active_hosts??'—'} active hosts`;
  devices=s.devices||[];
  renderNetBar(s);
@@ -760,31 +760,24 @@ async function refreshDevChart(){
  }catch(e){/* transient fetch/auth errors: next tick retries */}
 }
 
-function renderLeasePop(ps,ls){
- const pop=$('#lease-pop');
- const head=ps.map(p=>`${esc(p.name)}: <b style="color:var(--fg)">${p.used} / ${p.used+p.avail}</b>`).join(' &nbsp;·&nbsp; ');
- pop.innerHTML=`<div style="color:var(--muted);margin-bottom:6px">${head}</div>`
-  +(ls.length?`<table style="border-collapse:collapse;width:100%">`+ls.map(L=>{
-    const dot=L.status==='bound'?'<span style="color:var(--dl)">●</span>':'<span style="color:var(--muted)">○</span>';
-    const when=L.status==='bound'?(L.expires?`expires ${esc(L.expires)}`:'bound')
-      :esc(L.last_seen?`idle ${L.last_seen}`:L.status||'?');
-    return `<tr style="border-top:1px solid var(--border)">
-     <td style="padding:3px 7px 3px 0">${dot}</td>
-     <td style="padding:3px 7px 3px 0;font-variant-numeric:tabular-nums">${esc(L.ip)}</td>
-     <td style="padding:3px 7px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(L.host)||'<span style="color:var(--muted)">—</span>'}</td>
-     <td style="padding:3px 7px;color:var(--muted);font-size:11px">${esc(L.mac)}</td>
-     <td style="padding:3px 0;text-align:right;color:var(--muted);white-space:nowrap">${when}</td></tr>`;
-   }).join('')+`</table>`
-   :'<div style="color:var(--muted)">no DHCP leases</div>');
+function renderPoolPop(ps){
+ // one line per live DHCP pool: name, range, used/total (amber >90%)
+ $('#pools-pop').innerHTML=`<table style="border-collapse:collapse;width:100%">`+ps.map(p=>{
+   const t=p.used+p.avail,pct=t?p.used/t:0,warn=pct>0.9;
+   return `<tr style="border-top:1px solid var(--border)">
+    <td style="padding:4px 10px 4px 0;font-weight:600">${esc(p.name)}</td>
+    <td style="padding:4px 10px;color:var(--muted);font-size:11.5px">${esc((p.ranges||'').replace(/,/g,', '))}</td>
+    <td style="padding:4px 0;text-align:right;font-variant-numeric:tabular-nums${warn?';color:var(--ul)':''}">${p.used} / ${t}</td></tr>`;
+  }).join('')+`</table>`;
 }
-let _leasesOpen=false;
-function setLeaseOpen(open){
- _leasesOpen=open;$('#lease-pop').hidden=!open;$('#pools-caret').textContent=open?'▴':'▾';
- if(open){const st=window._lastState||{};renderLeasePop(st.pools||[],st.leases||[]);}
+let _poolsOpen=false;
+function setPoolsOpen(open){
+ _poolsOpen=open;$('#pools-pop').hidden=!open;$('#pools-caret').textContent=open?'▴':'▾';
+ if(open)renderPoolPop((window._lastState||{}).pools||[]);
 }
-$('#card-pools').onclick=e=>{if(e.target.closest('#lease-pop'))return;setLeaseOpen(!_leasesOpen);e.stopPropagation();};
-document.addEventListener('click',e=>{if(_leasesOpen&&!e.target.closest('#card-pools'))setLeaseOpen(false);});
-addEventListener('keydown',e=>{if(e.key==='Escape'&&_leasesOpen)setLeaseOpen(false);});
+$('#card-pools').onclick=e=>{if(e.target.closest('#pools-pop'))return;setPoolsOpen(!_poolsOpen);e.stopPropagation();};
+document.addEventListener('click',e=>{if(_poolsOpen&&!e.target.closest('#card-pools'))setPoolsOpen(false);});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&_poolsOpen)setPoolsOpen(false);});
 
 // ---- live flows (who this device is talking to) inside the device dialog
 let _flIP='', _flTab='all', _fl=null, _flTimer=null;
