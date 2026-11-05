@@ -644,7 +644,7 @@ function renderDevs(s){
  const devTotals={};
  // totals come from sqlite via state? fetch async — cache separately
  const list=devices.filter(d=>(!currentNet||d.net===currentNet)&&
-   (!q||(d.hostname+' '+d.ip+' '+d.mac+' '+d.vendor+' '+(d.net||'')).toLowerCase().includes(q)));
+   (!q||(d.hostname+' '+d.ip+' '+d.mac+' '+d.vendor+' '+(d.net||'')+' '+(d.ipv6||[]).join(' ')).toLowerCase().includes(q)));
  const key={name:d=>(d.hostname||d.vendor||d.ip).toLowerCase(),
    now:d=>-(d.rx_bps+d.tx_bps),total:d=>-(d.rx_total||0),conns:d=>-d.connections}[sortKey];
  list.sort((a,b)=>key(a)<key(b)?-1:1);
@@ -701,7 +701,8 @@ async function openDev(ip,mac){
  $('#dev-empty').hidden=true; $('#dev-body').hidden=false;
  $('#dev-title').textContent=d.hostname||d.vendor||ip;
  $('#dev-meta').textContent=`${ip} · ${d.mac} · ${d.board||d.vendor||'unknown vendor'}`
-   +`${d.fw?` · RouterOS ${d.fw}`:''} · ${d.interface||''}`;
+   +`${d.fw?` · RouterOS ${d.fw}`:''} · ${d.interface||''}`
+   +`${d.ipv6&&d.ipv6.length?` · IPv6 ${d.ipv6.join(', ')}`:''}`;
  const wl=$('#dev-wlan');
  if(wl){ if(d.wlan){wl.hidden=false;wl.textContent=`📶 ${d.wlan.ssid||''} · ${d.wlan.band||''}`
    +`${d.wlan.chipset?` · ${d.wlan.chipset}`:''} · ${d.wlan.signal} dBm`

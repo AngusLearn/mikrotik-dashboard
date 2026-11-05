@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-11-05
+1. **Batch #44 — IPv6: NDP presence, v6 conntrack merged, v6 flows per device** —
+   every poll path was `/ip/*` only, so the dashboard was blind to RouterOS's
+   separate IPv6 tables (official manual: connection tracking lives in
+   `/ip/firewall/connection` for IPv4 **and `/ipv6/firewall/connection` for
+   IPv6**). Now: (a) `/ipv6/firewall/connection` is fetched alongside v4
+   (same field schema) and merged into every conntrack consumer — flows, top
+   conversations, protocol/port tallies; v6 fetch failure degrades to v4-only,
+   never blanks the table. (b) routed IPv6 nets from `/ipv6/address` join
+   `lan_nets` (excluding WAN iface, `lo`, and `::1/128`), making the LAN
+   filter family-complete, so v6 LAN↔LAN never inflates WAN rates. (c)
+   `/ipv6/neighbor` (NDP) is a new **presence proof** — a non-`failed` entry
+   means the router just saw that box (`device_present(..., v6_macs=...)`) —
+   and a v6-address→MAC map: NDP caches whatever address a device used,
+   including RFC 4941 privacy temps, which is what makes v6 WAN flows
+   attributable; EUI-64 IID (new `eui64_iid()`/`v6_iid()`) is the fallback for
+   MAC-derived SLAAC addresses. Unattributable v6 flows count in global
+   tallies but never create ghost devices. (d) each device carries its NDP
+   `ipv6` addresses — shown in the detail panel meta, searchable in the
+   device filter; `/api/peers` passes them as `device_peers(self_addrs=...)`
+   so v6 peers appear for the opened device (incl. v6-only devices queried by
+   their v6 address), and the conversations host map is keyed by every
+   address a device is known under. On networks without WAN IPv6 (ours:
+   link-local only) behavior is unchanged except NDP presence. Known limits:
+   hashed-IID (RFC 7217) addresses attribute only while their NDP entry
+   lives; per-device v6 traffic lands on the device row via MAC, not as a
+   separate v6 "device". New `tests/test_ipv6_unit.py` (EUI-64 verified
+   against a live SLAAC address, NDP map parsing incl. failed/self/malformed
+   rows, v6 peers semantics); `test_online_unit.py` gains NDP-presence cases.
+   Verified: all unit suites PASS (`test_history_split.py` has a pre-existing
+   timing flake, fails identically on unmodified HEAD); live smoke poll on
+   RB3011UiAS 7.25: NDP addresses correctly mapped to 10 devices' rows,
+   fe80::/64 in lan_nets, 2338 flows, peers endpoint healthy. Browser suites
+   not re-run (playwright not installed on this host; frontend change is
+   string interpolation only, JS verified with `node --check`). Router config
+   untouched (read-only reads only).
+
 ## 2026-10-31
 2. **Batch #43 — "Devices online" counts presence, not DHCP leases** — the
    card's numerator was `online = bool(ips)`: any device holding an IP from

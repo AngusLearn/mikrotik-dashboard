@@ -39,6 +39,14 @@ def test_wifi_association_present():
     assert dp(M, [], 0, set(), set(), associated=True) is True
 
 
+def test_ndp_entry_present_case_insensitive():
+    # a live IPv6 NDP entry (whatever the status unless failed) proves presence
+    assert dp(M, [], 0, set(), set(), v6_macs={"AA:BB:CC:00:00:01"}) is True
+    assert dp("AA:BB:CC:00:00:01", [], 0, set(), set(), v6_macs={"AA:BB:CC:00:00:01"}) is True
+    # a device NOT in the NDP set gains nothing from the new source
+    assert dp(M, [], 0, set(), set(), v6_macs={"DE:AD:BE:EF:00:01"}) is False
+
+
 def test_no_ip_no_proof_not_present():
     assert dp(M, [""], 0, arp_ips={"192.168.1.9"}, mndp_macs=set()) is False
 

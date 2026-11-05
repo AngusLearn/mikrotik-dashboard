@@ -329,14 +329,65 @@ def human_bytes(n: float) -> str:
 ONLINE_MIN_BPS = 1000  # live WAN traffic that counts as proof of presence
 
 
-def device_present(mac, ips, rate_bps, arp_ips, mndp_macs, associated=False):
+def eui64_iid(mac: str) -> str:
+    """Modified EUI-64 interface identifier a device derives from its MAC
+    (RFC 4291): middle bytes ff:fe inserted, U/L bit flipped. Returns the
+    16-hex-digit IID without colons, or '' for a malformed MAC. Devices using
+    RFC 7217 'stable privacy' or RFC 4941 temp addresses have hashed/random
+    IIDs and are NOT found this way — those only match via live NDP entries."""
+    h = re.sub(r"[:\-]", "", str(mac)).lower()
+    if not re.fullmatch(r"[0-9a-f]{12}", h):
+        return ""
+    # U/L bit is bit 1 of the first byte, i.e. the SECOND hex digit
+    return f"{h[0]}{int(h[1], 16) ^ 2:x}{h[2:6]}fffe{h[6:]}"
+
+
+def v6_iid(addr) -> str:
+    """Low 64 bits of an IPv6 address as 16 hex digits (zone %iface stripped);
+    '' for anything that is not a valid IPv6 address."""
+    try:
+        ia = ipaddress.IPv6Address(str(addr).split("%")[0])
+    except ValueError:
+        return ""
+    return format(int(ia) & (2**64 - 1), "016x")
+
+
+def ndp_maps(rows, own_addrs=()):
+    """Parse /ipv6/neighbor print rows into IPv6 presence + attribution maps.
+
+    Returns (present_macs, addr2mac):
+    - present_macs: upper-case MACs whose NDP entry the router recently saw
+      (status 'failed' excluded; reachable/stale/delay/probe all prove presence,
+      same semantics as a stale ARP entry). Router's own addresses are skipped.
+    - addr2mac: v6 address -> MAC for every entry, including the device's
+      temporary global addresses — these are what map v6 conntrack endpoints
+      back to devices, because NDP caches whatever address the device used.
+    """
+    present, addr2mac = set(), {}
+    own = {str(a).split("%")[0] for a in own_addrs}
+    for n in rows or []:
+        mac = str(n.get("mac-address", "") or "").upper()
+        addr = str(n.get("address", "") or "").split("%")[0]
+        if not mac or not addr or addr in own:
+            continue
+        if str(n.get("status", "") or "").lower() == "failed":
+            continue
+        present.add(mac)
+        addr2mac[addr] = mac
+    return present, addr2mac
+
+
+def device_present(mac, ips, rate_bps, arp_ips, mndp_macs, associated=False,
+                   v6_macs=()):
     """Presence test behind the 'online' counter. A DHCP lease is NOT proof
     of presence — it survives for hours after the device left. Real proofs:
     a live ARP entry, an active WiFi association (registration table), a
-    MikroTik neighbor beacon (the box is answering right now), or current
+    MikroTik neighbor beacon (the box is answering right now), a live IPv6
+    NDP entry (the router saw its neighbour advertisement), or current
     WAN traffic."""
     return (associated
             or mac.upper() in mndp_macs
+            or mac.upper() in v6_macs
             or any(ip in arp_ips for ip in ips)
             or rate_bps > ONLINE_MIN_BPS)
 
@@ -424,8 +475,15 @@ class RouterMonitor(threading.Thread):
         """Conntrack fetch: RouterOS traps mid-print when the table churns;
         on failure the cached snapshot keeps per-device rates instead of
         collapsing to zero under load. Also kept on self for the peers/conns
-        request handlers (they must not touch the live API connection)."""
-        rows = self.fetch(api, "/ip/firewall/connection")
+        request handlers (they must not touch the live API connection).
+        IPv6 lives in its own table (/ipv6/firewall/connection, same field
+        schema) and is merged in — missing/failed v6 fetch degrades to v4
+        only, never blanks the v4 rows."""
+        rows = list(self.fetch(api, "/ip/firewall/connection"))
+        try:
+            rows += self.fetch(api, "/ipv6/firewall/connection")
+        except Exception:
+            pass  # non-critical: v4 accounting keeps working
         self.last_conns = rows
         return rows
 
@@ -529,6 +587,14 @@ class RouterMonitor(threading.Thread):
                 own_ips.add(addr)
             if a.get("interface") in wan_names:
                 wan_ip_local = addr
+        # own IPv6 (incl. link-local) — needed to skip the router in NDP maps
+        v6_addr_rows = self.fetch(api, "/ipv6/address")
+        v6_own = set()
+        for a in v6_addr_rows:
+            addr = a.get("address", "").split("/")[0]
+            if addr:
+                v6_own.add(addr)
+                own_ips.add(addr)
 
         # ---- diff -> WAN rate (rates for the UI, exact byte deltas for volume)
         wan_rx_bps = wan_tx_bps = 0.0
@@ -646,6 +712,18 @@ class RouterMonitor(threading.Thread):
                 d["ips"].add(extra_ip)
                 ip2mac.setdefault(extra_ip, mac)
 
+        # ---- IPv6 NDP: presence proof + v6-address -> device map. NDP caches
+        # whatever address a device used (incl. privacy temps) while it is on
+        # line, so it both proves presence and maps v6 conntrack endpoints back.
+        v6_present, v6_addr2mac = ndp_maps(
+            self.fetch(api, "/ipv6/neighbor"), v6_own)
+        v6_by_mac: dict = {}
+        for a, m in v6_addr2mac.items():
+            v6_by_mac.setdefault(m, []).append(a)
+        # fallback: SLAAC addresses built from the MAC itself (EUI-64 IID)
+        iid2mac = {iid: m for m, iid in
+                   ((m, eui64_iid(m)) for m in macinfo) if iid}
+
         # ---- routed subnets (VLANs) from /ip/address
         nets = []
         for a in addr_rows:
@@ -654,6 +732,16 @@ class RouterMonitor(threading.Thread):
                 nets.append((net, a.get("interface", "") or str(net)))
             except ValueError:
                 pass
+        # routed IPv6 nets too (skip ::1 host route and loopback); this makes
+        # in_lan() family-complete, so v6 LAN<->LAN is excluded from WAN rates
+        # exactly like v4, and a PD-routed WAN stays outside lan_nets
+        for a in v6_addr_rows:
+            try:
+                net = ipaddress.ip_network(a.get("address", ""), strict=False)
+            except ValueError:
+                continue
+            if net.version == 6 and net.prefixlen < 128 and a.get("interface") != "lo":
+                nets.append((net, a.get("interface", "") or str(net)))
         lan_nets = [net for net, iface in nets if iface not in wan_names]
         self.lan_nets = lan_nets
 
@@ -676,6 +764,7 @@ class RouterMonitor(threading.Thread):
             return any(ia in net for net in lan_nets)
 
         dev_rate: dict = {}  # ip -> [rx_bps, tx_bps, conns]
+        v6_dev_rate: dict = {}  # MAC -> [rx_bps, tx_bps, conns] for v6 endpoints
         proto_acc: dict = {}  # proto -> [rx_bps, tx_bps, flows] (WAN-bound only)
         port_acc: dict = {}   # "tcp/443" -> [rx_bps, tx_bps, flows]
         flows_n = 0
@@ -700,18 +789,25 @@ class RouterMonitor(threading.Thread):
             # RouterOS v6 names this field "reply-rate"; both are bps, so the fallback is safe
             repl = as_num(c.get("repl-rate", 0)) or as_num(c.get("reply-rate", 0))
             inbound = not in_lan(src)  # original dir came from outside (dstnat / inbound)
-            d = dev_rate.setdefault(local_ip, [0.0, 0.0, 0])
-            if inbound:
-                d[0] += orig  # outside -> device
-                d[1] += repl
+            rx_o, tx_o = (orig, repl) if inbound else (repl, orig)
+            # IPv6 endpoints map back to a device only via NDP (the address the
+            # device actually used, incl. privacy temps) or its EUI-64 IID.
+            # Unattributable v6 flows stay in the global tallies but never
+            # create ghost devices in the device table.
+            if ":" in local_ip:
+                v6_mac = (v6_addr2mac.get(local_ip)
+                          or iid2mac.get(v6_iid(local_ip), ""))
+                d = (v6_dev_rate.setdefault(v6_mac.upper(), [0.0, 0.0, 0])
+                     if v6_mac else None)
             else:
-                d[0] += repl  # device -> outside, reply carries the download
-                d[1] += orig
-            d[2] += 1
+                d = dev_rate.setdefault(local_ip, [0.0, 0.0, 0])
+            if d is not None:
+                d[0] += rx_o  # d[0]=download, d[1]=upload from the device's view
+                d[1] += tx_o
+                d[2] += 1
             # global protocol/port tallies (same LAN-view direction as dev_rate)
             flows_n += 1
             proto = str(c.get("protocol", "")).lower() or "?"
-            rx_o, tx_o = (orig, repl) if inbound else (repl, orig)
             pa = proto_acc.setdefault(proto, [0.0, 0.0, 0])
             pa[0] += rx_o
             pa[1] += tx_o
@@ -767,15 +863,18 @@ class RouterMonitor(threading.Thread):
                 continue
             ips = sorted(d["ips"]) or [""]
             ip = ips[0]
-            rx_bps = sum(dev_rate.get(x, [0, 0, 0, 0, 0])[0] for x in ips)
-            tx_bps = sum(dev_rate.get(x, [0, 0, 0, 0, 0])[1] for x in ips)
-            conns = sum(dev_rate.get(x, [0, 0, 0, 0, 0])[2] for x in ips)
-            online = device_present(mac, ips, rx_bps + tx_bps, arp_ips, mndp_macs)
+            v6m = v6_dev_rate.get(mac.upper(), [0, 0, 0])
+            rx_bps = sum(dev_rate.get(x, [0, 0, 0, 0, 0])[0] for x in ips) + v6m[0]
+            tx_bps = sum(dev_rate.get(x, [0, 0, 0, 0, 0])[1] for x in ips) + v6m[1]
+            conns = sum(dev_rate.get(x, [0, 0, 0, 0, 0])[2] for x in ips) + v6m[2]
+            online = device_present(mac, ips, rx_bps + tx_bps, arp_ips,
+                                    mndp_macs, v6_macs=v6_present)
             devices_out.append(
                 {
                     "mac": mac,
                     "ip": ip,
                     "ips": ips,
+                    "ipv6": sorted(v6_by_mac.get(mac.upper(), [])),
                     "hostname": d["hostname"] or "",
                     "vendor": vendor_of(mac) or d.get("platform", ""),
                     "board": d.get("board", ""),
@@ -921,7 +1020,7 @@ class RouterMonitor(threading.Thread):
             "wan_rx_bps": round(wan_rx_bps, 1),
             "wan_tx_bps": round(wan_tx_bps, 1),
             "flows": flows_n,
-            "active_hosts": len(dev_rate),  # LAN IPs with a live WAN connection
+            "active_hosts": len(dev_rate) + len(v6_dev_rate),  # LAN IPs/MACs with a live WAN connection
         }
         netsum = {}
         for d in devices_out:
@@ -1273,16 +1372,20 @@ def suffix_of(host: str) -> str:
     return ".".join(parts[-2:])
 
 
-def device_peers(conns, lan_nets, ip: str, limit: int = 25, self_ips=()) -> dict:
-    """Aggregate conntrack rows for one LAN IP into a peer list.
+def device_peers(conns, lan_nets, ip: str, limit: int = 25, self_ips=(),
+                 self_addrs=()) -> dict:
+    """Aggregate conntrack rows for one LAN device into a peer list.
 
     `self_ips` = the router's own WAN address(es): flows there are hairpin /
     port-test traffic, not a real remote peer, so they are reported separately.
+    `self_addrs` = the device's known IPv6 addresses (from NDP): conntrack is
+    per address family, so v6 flows are only visible when these are passed.
     """
     nets = [ipaddress.ip_network(n) for n in lan_nets] or [
         ipaddress.ip_network(x) for x in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
     ]
     self_ips = {str(x) for x in self_ips if x}
+    me = {str(ip)} | {str(a) for a in self_addrs if a}
 
     def in_lan(a):
         try:
@@ -1299,15 +1402,15 @@ def device_peers(conns, lan_nets, ip: str, limit: int = 25, self_ips=()) -> dict
         rd = str(c.get("reply-dst-address", "")).split("%")[0]
         # original tuple: src->dst ; reply tuple: reply-src is the original *destination*,
         # reply-dst is the original *source* (both after NAT where applicable)
-        if src == ip:
+        if src in me:
             return ("lan", dst) if in_lan(dst) else ("out", dst)
-        if dst == ip:
+        if dst in me:
             return ("lan", src) if in_lan(src) else ("in", src)
         # dstnat/port-forward: header shows the router's WAN address as dst, but the
         # reply side names the real LAN target -> the peer is the remote initiator
-        if rs == ip:
+        if rs in me:
             return ("lan", src) if in_lan(src) else ("in", src)
-        if rd == ip:
+        if rd in me:
             return ("lan", dst) if in_lan(dst) else ("out", dst)
         return None, None
 
@@ -1400,7 +1503,15 @@ def api_peers(ip: str, limit: int = 25):
     with _state_lock:
         wan = STATE.get("wan") or {}
         self_ips = [wan.get("ip", ""), wan.get("gw", "")]
-    data = device_peers(conns, lan, ip, max(1, min(limit, 60)), self_ips=self_ips)
+        # the device's NDP-known IPv6 addresses, so v6 conntrack rows attribute
+        # to the same device the panel is showing (conntrack is per family)
+        self_addrs: list = []
+        for d in STATE.get("devices", []):
+            if d.get("ip") == ip or ip in (d.get("ips") or []):
+                self_addrs = list(d.get("ipv6") or [])
+                break
+    data = device_peers(conns, lan, ip, max(1, min(limit, 60)),
+                        self_ips=self_ips, self_addrs=self_addrs)
     # name enrichment: router DNS cache first (free, already on the router), then lazy rDNS
     pending = 0
     for p in data["peers"]:
@@ -1566,8 +1677,14 @@ def api_analytics_conns(limit: int = 15):
     with _state_lock:
         wan_ip = (STATE.get("wan") or {}).get("ip", "")
         gw_ip = (STATE.get("wan") or {}).get("gw", "")
-        hosts = {d["ip"]: (d.get("hostname") or d.get("vendor") or "")
-                 for d in STATE.get("devices", [])}
+        # name lookup keyed by every address a device is known under —
+        # v4 primary/extra IPs and NDP-observed IPv6 addresses alike
+        hosts: dict = {}
+        for d in STATE.get("devices", []):
+            nm = d.get("hostname") or d.get("vendor") or ""
+            for a in [d.get("ip"), *(d.get("ips") or []), *(d.get("ipv6") or [])]:
+                if a:
+                    hosts.setdefault(a, nm)
     skip_ips = {x for x in (wan_ip, gw_ip) if x}
 
     def in_lan(a):
