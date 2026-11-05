@@ -34,6 +34,10 @@ Below the map, **traffic analytics** panels give an ntopng-style overview:
 active-flows & active-hosts history (1h/6h/24h), exact traffic volume +
 protocol distribution for the range, top ports by traffic, and a live
 **Top conversations** table of every local ⇄ remote conversation right now.
+The header cards also surface the router's own **hardware sensors**
+(temperature/voltage from `/system/health`, on boards that expose them) and
+**DHCP lease usage** (leases in use / total pool from `/ip/pool`, amber when
+any pool runs over 90% full).
 
 ## Files
 | file | purpose |
@@ -124,7 +128,9 @@ time. Switch to your AP's profile (⚙ Router) to see who is connected over
 WiFi and how. Works with both RouterOS WiFi stacks.
 
 ## Recommended: create a read-only router login (do this once in Winbox)
-Don't give the dashboard your admin account. RouterOS supports read-only users:
+Don't give the dashboard your admin account. RouterOS supports read-only users
+(details: [Users](https://manual.mikrotik.com/docs/cli-reference/user.md),
+[group policies](https://manual.mikrotik.com/docs/cli-reference/user/group.md)):
 1. Winbox → **Users** tab → click **Groups** → `+`
    - Name: `monitor`
    - Policies: tick **read** and **test** only. OK.
@@ -135,7 +141,9 @@ That user can see everything but cannot change router settings — worst case
 if the password ever leaks, nobody can touch your router config.
 
 ## Router side checklist (usually nothing to do)
-- API service must be enabled: Winbox → **IP → Services** → `api` (port 8728) should be present. It is enabled by default on most setups.
+- API service must be enabled: Winbox → **IP → Services** → `api` (port 8728) should
+  be present ([/ip/service reference](https://manual.mikrotik.com/docs/cli-reference/ip/service.md)).
+  It is enabled by default on most setups.
 - Ports used: dashboard listens on `8899` on your PC; router API `8728`.
 
 ## Login password (Pi-hole style — the dashboard is never served unauthenticated)
@@ -186,8 +194,16 @@ the listen port). The automated browser suites authenticate automatically with
 - WAN totals: exact, from router interface byte counters.
 - Per device: live estimate aggregated from the router's connection table
   (per-session rates), accumulated over time into per-device totals.
-  No router config changes needed. For bit-exact per-device accounting,
-  enable Torch (NetFlow) — possible as a future upgrade.
+  No router config changes needed. For bit-exact per-device accounting the
+  usual suggestion is [Torch/Traffic
+  Flow](https://manual.mikrotik.com/docs/diagnostics-monitoring-and-troubleshooting/torch.md)
+  — deliberately **not** on the roadmap: Traffic Flow does not see
+  hardware-offloaded traffic (per [Traffic
+  Flow](https://manual.mikrotik.com/docs/diagnostics-monitoring-and-troubleshooting/traffic-flow.md),
+  L3HW-forwarded packets bypass it entirely, which kills it on
+  switch-chip-offloaded bridges — exactly the common home-router case), and
+  enabling it requires write access to the router, against this dashboard's
+  read-only design.
 
 ## The Live flows list — what it can and cannot tell you
 Click any device: the detail panel lists the remote IPs it currently has connections

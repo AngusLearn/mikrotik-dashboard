@@ -275,6 +275,8 @@ STATE = {
     "topo": {},
     "config": {},
     "wifi": [],
+    "health": [],
+    "pools": [],
 }
 _state_lock = threading.Lock()
 
@@ -947,6 +949,21 @@ class RouterMonitor(threading.Thread):
             info["stations"] = sum(1 for a in wifi_assoc.values() if a.get("radio") == name)
             wifi_out.append(info)
 
+        # ---- hardware health + DHCP pool headroom (informational).
+        # api_fetch_all on purpose, NOT self.fetch: older RouterOS has no
+        # /system/health, and a path that permanently fails must never flip
+        # poll_degraded into a permanent "router busy" banner. Absent = hidden
+        # in the UI, like the WiFi panels on an ethernet-only board.
+        health = [{"name": str(h.get("name", "")), "value": str(h.get("value", "")),
+                   "type": str(h.get("type", ""))}
+                  for h in (api_fetch_all(api, "/system/health") or [])
+                  if h.get("name")]
+        pools = []
+        for p in api_fetch_all(api, "/ip/pool") or []:
+            used, avail = int(as_num(p.get("used"), 0)), int(as_num(p.get("available"), 0))
+            if used + avail > 0:
+                pools.append({"name": p.get("name", ""), "used": used, "avail": avail})
+
         # ---- blocked devices
         blocked_ips = set()
         for e in self.fetch(api, "/ip/firewall/address-list"):
@@ -1074,6 +1091,8 @@ class RouterMonitor(threading.Thread):
             STATE["nets"] = netsum
             STATE["topo"] = topo
             STATE["wifi"] = wifi_out
+            STATE["health"] = health
+            STATE["pools"] = pools
         STATE["config"] = {
             "host": cfg["host"],
             "user": cfg.get("user", ""),
@@ -1566,6 +1585,8 @@ def api_state():
             "totals": STATE["totals"],
             "nets": STATE["nets"],
             "wifi": STATE.get("wifi", []),
+            "health": STATE.get("health", []),
+            "pools": STATE.get("pools", []),
             "topo": STATE["topo"],
             "config": STATE["config"] or {"host": load_config()["host"]},
         }
@@ -1761,7 +1782,8 @@ def _clear_display(msg: str) -> None:
     with _state_lock:
         STATE.update({"connected": False, "last_error": msg, "updated": 0.0,
                       "system": {}, "wan": {}, "devices": [], "totals": {},
-                      "nets": {}, "topo": {}, "wifi": []})
+                      "nets": {}, "topo": {}, "wifi": [],
+                      "health": [], "pools": []})
 
 
 def _sync_profiles(cfg: dict) -> dict:

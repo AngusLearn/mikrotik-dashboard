@@ -144,6 +144,8 @@ svg text{user-select:none}
   <div class="card"><div class="k">CPU / Memory</div><div class="v" id="c-cpu" style="font-size:15px">—</div>
     <div class="gauge"><i id="g-cpu" style="width:0%"></i></div></div>
   <div class="card"><div class="k">Uptime</div><div class="v" id="c-up" style="font-size:15px">—</div></div>
+  <div class="card" id="card-health" hidden title="router hardware sensors (/system/health — availability depends on the board)"><div class="k">Router health</div><div class="v" id="c-health" style="font-size:15px">—</div></div>
+  <div class="card" id="card-pools" hidden title="DHCP address pools (/ip/pool): leases in use / total capacity — amber when any pool is over 90% full"><div class="k">DHCP leases</div><div class="v" id="c-pools" style="font-size:15px">—</div></div>
 </div>
 
 <div class="row2" style="margin-bottom:14px">
@@ -607,6 +609,18 @@ async function poll(){
  $('#c-cpu').textContent=`${Math.round(sy.cpu_load||0)}% / ${sy.mem_total?Math.round((1-sy.mem_free/sy.mem_total)*100):0}%`;
  $('#g-cpu').style.width=(sy.cpu_load||0)+'%';
  $('#c-up').textContent=sy.uptime||'—';
+ // health chip: sensors vary wildly per board (x86 has fans/voltages, ARM may
+ // have one temp); empty list = hide the card entirely
+ {const hs=s.health||[];const ch=$('#c-health');
+  $('#card-health').hidden=!hs.length;
+  if(hs.length)ch.textContent=hs.map(h=>h.name==='temperature'?`${h.value} °C`
+    :h.name==='voltage'?`${h.value} V`:h.value+(h.type?` ${h.type}`:'')).join(' · ');}
+ // DHCP pools: worst pool usage drives the amber warning
+ {const ps=s.pools||[];const cp=$('#c-pools');
+  $('#card-pools').hidden=!ps.length;
+  if(ps.length){const u=ps.reduce((a,p)=>a+p.used,0),t=ps.reduce((a,p)=>a+p.used+p.avail,0);
+   const worst=Math.max(...ps.map(p=>p.used+p.avail?p.used/(p.used+p.avail):0));
+   cp.textContent=`${u} / ${t}`;cp.style.color=worst>0.9?'#d29922':'';}}
  $('#fh-now').textContent=`· now: ${t.flows??'—'} flows · ${t.active_hosts??'—'} active hosts`;
  devices=s.devices||[];
  renderNetBar(s);
