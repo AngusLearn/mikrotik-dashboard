@@ -1,6 +1,14 @@
 # Changelog
 
 ## 2026-11-05
+6. **Ports map fix: hub-to-port edges** — the renderer drew
+   router->hub and port->device edges but never hub->port, invisible in Nets
+   mode on routers without port sub-groups and glaring in Ports mode. Port
+   via-entries now remember their parent net; buildTopo adds `via:<port>`
+   edges and paintTopo re-routes them as ports drift with their devices.
+   JS node --check OK.
+
+## 2026-11-05
 5. **Batch #47 — "Ports" map mode** — new toggle next to ⇅ Sort on the
    network map: **🗺 Nets ⇄ 🔌 Ports**. Ports mode regroups the same device
    chips under their PHYSICAL bridge port (🔌 ether5, ether10, bonding-PVE,

@@ -462,7 +462,7 @@ function topoLayout(s){
   via[nk]={x:X.hub,off:164,macs:[],kind:'net',label:n.label};
   for(const g of n.groups){
    const k=g.port?('port:'+n.label+':'+g.port):nk;
-   if(g.port)via[k]={x:X.port,off:132,macs:[],kind:'port',port:g.port};
+   if(g.port)via[k]={x:X.port,off:132,macs:[],kind:'port',port:g.port,nk:nk};
    for(const d of g.devices){
     dev[d.mac]={y,gx:g.port?X.dev:(X.port||560),via:k,name:d.name,ip:d.ip,fw:d.fw,board:d.board,wlan:d.wlan};
     via[k].macs.push(d.mac); via[nk].macs.push(d.mac); y+=36+14*((d.fw?1:0)+(d.wlan?1:0))}
@@ -490,6 +490,10 @@ function buildTopo(s){
  e+=`<path class="tedge" data-edge="wan" d="${edgeD(X.cloud+138,L.mid,X.router,L.mid)}"/>`;
  for(const nk of L.nets){const v=L.via[nk];
   e+=`<path class="tedge" data-edge="${esc('net:'+v.label)}" d="${edgeD(X.router+152,L.mid,v.x,v.y)}"/>`}
+ // net-hub -> port edges (Ports mode: every device hangs behind a port;
+ // in Nets mode this just draws nothing extra unless a port group exists)
+ for(const k in L.via)if(L.via[k].kind==='port'){const v=L.via[k],h=L.via[v.nk];
+  if(h)e+=`<path class="tedge" data-edge="${esc('via:'+k)}" d="${edgeD(h.x+h.off,h.y,v.x,v.y)}"/>`}
  for(const mac in L.dev){const d=L.dev[mac],v=L.via[d.via];
   e+=`<path class="tedge" data-edge="${esc('dev:'+mac)}" d="${edgeD(v.x+v.off,v.y,d.gx,d.y)}"/>`}
  // port + device + net-hub nodes
@@ -541,7 +545,11 @@ function paintTopo(){
   if(!ys.length)continue;const y=(Math.min(...ys)+Math.max(...ys))/2;cy[k]=y;
   if(_tv[k])_tv[k].setAttribute('transform',`translate(${v.x},${y})`);
   const ne=v.kind==='net'?_te['net:'+v.label]:null;
-  if(ne)ne.setAttribute('d',edgeD(L.X.router+152,L.mid,v.x,y))}
+  if(ne)ne.setAttribute('d',edgeD(L.X.router+152,L.mid,v.x,y))
+  // hub -> port edge follows both endpoints (nets are inserted before their
+  // ports, so cy[v.nk] is already current in this same pass)
+  if(v.kind==='port'){const h=L.via[v.nk],pe=_te['via:'+k];
+   if(h&&pe)pe.setAttribute('d',edgeD(h.x+h.off,cy[v.nk]!=null?cy[v.nk]:h.y,v.x,y))}}
  for(const mac in L.dev){const d=L.dev[mac],y=_tY[mac];if(y==null)continue;
   if(_tm[mac]&&_tm[mac].g)_tm[mac].g.setAttribute('transform',`translate(${d.gx},${y})`);
   const e=_te['dev:'+mac],v=L.via[d.via];
