@@ -77,7 +77,12 @@ tr.dev.sel{background:#16202b}
 @media(max-width:1200px){.mapwrap{flex-direction:column;align-items:stretch}
   .dpanel{flex:none;width:100%;max-height:none;position:static}}
 .gauge{height:6px;background:var(--panel2);border-radius:3px;margin-top:6px;overflow:hidden}
-.gauge>i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.gauge>i{display:block;height:100%;background:var(--accent);border-radius:3px;transition:width .4s}
+.gauge>i.lo{background:var(--dl)} .gauge>i.mid{background:var(--ul)} .gauge>i.hi{background:var(--red)}
+.mrow{display:flex;align-items:center;gap:7px;margin-top:6px}
+.mrow .lab{font-size:10px;color:var(--muted);width:28px;letter-spacing:.04em}
+.mrow .gauge{flex:1;margin-top:0}
+.mrow .pct{font-size:11px;width:32px;text-align:right;font-variant-numeric:tabular-nums;color:var(--fg)}
 .badge{font-size:10px;background:#312409;color:var(--ul);border:1px solid #6b4d0e;
   border-radius:6px;padding:1px 7px;margin-left:8px}
 .netb{font-size:10px;background:#102a33;color:#56d4dd;border:1px solid #1c4b57;
@@ -141,8 +146,9 @@ svg text{user-select:none}
   <div class="card"><div class="k">Upload</div><div class="v ul" id="c-ul">—</div></div>
   <div class="card" title="present now (live ARP entry, WiFi association, MikroTik neighbor beacon or traffic) / devices known to the router. A powered-off device with a fresh DHCP lease does NOT count as online."><div class="k">Devices online</div><div class="v" id="c-dev">—</div></div>
   <div class="card"><div class="k">WAN IP</div><div class="v" id="c-wanip" style="font-size:15px">—</div></div>
-  <div class="card"><div class="k">CPU / Memory</div><div class="v" id="c-cpu" style="font-size:15px">—</div>
-    <div class="gauge"><i id="g-cpu" style="width:0%"></i></div></div>
+  <div class="card"><div class="k">CPU / Memory</div>
+    <div class="mrow"><span class="lab">CPU</span><div class="gauge"><i id="g-cpu" class="lo" style="width:0%"></i></div><span class="pct" id="v-cpu">—</span></div>
+    <div class="mrow"><span class="lab">MEM</span><div class="gauge"><i id="g-mem" class="lo" style="width:0%"></i></div><span class="pct" id="v-mem">—</span></div></div>
   <div class="card"><div class="k">Uptime</div><div class="v" id="c-up" style="font-size:15px">—</div></div>
   <div class="card" id="card-health" hidden title="router hardware sensors (/system/health — availability depends on the board)"><div class="k">Router health</div><div class="v" id="c-health" style="font-size:15px">—</div></div>
   <div class="card" id="card-pools" hidden style="cursor:pointer;position:relative" title="DHCP address pools (/ip/pool): leases in use / total capacity — amber when any pool is over 90% full. Click to list the pools."><div class="k">DHCP leases <span id="pools-caret" style="float:right">▾</span></div><div class="v" id="c-pools" style="font-size:15px">—</div>
@@ -608,8 +614,10 @@ async function poll(){
  $('#c-ul').innerHTML=fmtBps(t.wan_tx_bps).replace(' ',' <small>');
  $('#c-dev').textContent=`${t.devices_online??'—'} / ${t.devices_total??'—'}`;
  $('#c-wanip').textContent=wa.ip||'—';
- $('#c-cpu').textContent=`${Math.round(sy.cpu_load||0)}% / ${sy.mem_total?Math.round((1-sy.mem_free/sy.mem_total)*100):0}%`;
- $('#g-cpu').style.width=(sy.cpu_load||0)+'%';
+ {const cpu=Math.round(sy.cpu_load||0), mem=sy.mem_total?Math.round((1-sy.mem_free/sy.mem_total)*100):0;
+  const cls=p=>p>=80?'hi':p>=50?'mid':'lo';   // green <50, amber 50-79, red >=80
+  $('#g-cpu').style.width=cpu+'%'; $('#g-cpu').className=cls(cpu); $('#v-cpu').textContent=cpu+'%';
+  $('#g-mem').style.width=mem+'%'; $('#g-mem').className=cls(mem); $('#v-mem').textContent=mem+'%';}
  $('#c-up').textContent=sy.uptime||'—';
  // health chip: sensors vary wildly per board (x86 has fans/voltages, ARM may
  // have one temp); empty list = hide the card entirely
