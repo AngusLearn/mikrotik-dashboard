@@ -1,6 +1,13 @@
 # Changelog
 
 ## 2026-11-05
+7. **Ports map: flow animation on hub->port edges** — the new edges were
+   wired geometrically but not into liveTopo's per-edge rate loop, so they
+   stayed static while device edges flowed. Each hub->port edge now flows
+   at the summed rx+tx of the devices behind that port (same rate->speed
+   mapping as every other edge). JS node --check OK.
+
+## 2026-11-05
 6. **Ports map fix: hub-to-port edges** — the renderer drew
    router->hub and port->device edges but never hub->port, invisible in Nets
    mode on routers without port sub-groups and glaring in Ports mode. Port
