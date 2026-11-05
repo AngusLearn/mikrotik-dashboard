@@ -146,7 +146,7 @@ svg text{user-select:none}
   <div class="card"><div class="k">Uptime</div><div class="v" id="c-up" style="font-size:15px">—</div></div>
   <div class="card" id="card-health" hidden title="router hardware sensors (/system/health — availability depends on the board)"><div class="k">Router health</div><div class="v" id="c-health" style="font-size:15px">—</div></div>
   <div class="card" id="card-pools" hidden style="cursor:pointer;position:relative" title="DHCP address pools (/ip/pool): leases in use / total capacity — amber when any pool is over 90% full. Click to list the pools."><div class="k">DHCP leases <span id="pools-caret" style="float:right">▾</span></div><div class="v" id="c-pools" style="font-size:15px">—</div>
-    <div id="pools-pop" hidden style="position:absolute;top:calc(100% + 6px);left:0;z-index:40;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 28px rgba(0,0,0,.5);padding:10px 12px;min-width:430px;max-width:min(560px,92vw);max-height:340px;overflow:auto;font-size:12.5px;cursor:auto"></div>
+    <div id="pools-pop" hidden style="position:absolute;top:calc(100% + 6px);right:0;z-index:40;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 28px rgba(0,0,0,.5);padding:8px 10px;min-width:250px;max-width:340px;font-size:12px;cursor:auto"></div>
   </div>
 </div>
 
@@ -760,14 +760,23 @@ async function refreshDevChart(){
  }catch(e){/* transient fetch/auth errors: next tick retries */}
 }
 
+const shortRange=r=>(r||'').split(',').map(x=>{
+ // "192.0.2.2-192.0.2.253" -> "192.0.2.2-253"; only collapses when both
+ // ends are IPv4 sharing the first three octets, anything else passes through
+ const a=x.trim().split('-'); if(a.length!==2) return x.trim();
+ const p=a[0].split('.'), q=a[1].split('.');
+ if(p.length===4&&q.length===4&&p[0]===q[0]&&p[1]===q[1]&&p[2]===q[2])
+   return a[0]+'-'+q[3];
+ return a[0]+'-'+a[1];
+}).join(', ');
 function renderPoolPop(ps){
  // one line per live DHCP pool: name, range, used/total (amber >90%)
  $('#pools-pop').innerHTML=`<table style="border-collapse:collapse;width:100%">`+ps.map(p=>{
    const t=p.used+p.avail,pct=t?p.used/t:0,warn=pct>0.9;
    return `<tr style="border-top:1px solid var(--border)">
-    <td style="padding:4px 10px 4px 0;font-weight:600">${esc(p.name)}</td>
-    <td style="padding:4px 10px;color:var(--muted);font-size:11.5px">${esc((p.ranges||'').replace(/,/g,', '))}</td>
-    <td style="padding:4px 0;text-align:right;font-variant-numeric:tabular-nums${warn?';color:var(--ul)':''}">${p.used} / ${t}</td></tr>`;
+    <td style="padding:3px 10px 3px 0;font-weight:600;white-space:nowrap">${esc(p.name)}</td>
+    <td style="padding:3px 10px 3px 0;color:var(--muted);font-size:11px;white-space:nowrap">${esc(shortRange(p.ranges))}</td>
+    <td style="padding:3px 0;text-align:right;font-variant-numeric:tabular-nums${warn?';color:var(--ul)':''};white-space:nowrap">${p.used} / ${t}</td></tr>`;
   }).join('')+`</table>`;
 }
 let _poolsOpen=false;
