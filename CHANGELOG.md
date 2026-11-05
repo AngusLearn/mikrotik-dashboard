@@ -1,6 +1,29 @@
 # Changelog
 
 ## 2026-11-05
+2. **Batch #45 — router health chip, DHCP pool headroom, honest Torch notes,
+   official manual links** — two new header cards from read-only polls:
+   **Router health** renders `/system/health` sensors (name/value/type as
+   RouterOS prints them; RB3011 exposes voltage+temperature) and **DHCP
+   leases** shows `used / capacity` summed over `/ip/pool`, amber when any
+   single pool exceeds 90% (pool exhaustion silently breaks new clients).
+   Both use `api_fetch_all` directly, NOT the last-good `self.fetch`: a board
+   without the path (older RouterOS has no `/system/health`) must stay hidden,
+   never trigger the permanent "router busy" banner; empty list hides the card
+   client-side too. README: the "enable Torch for bit-exact accounting"
+   future-upgrade line was **wrong advice** — official RouterOS docs state
+   Traffic Flow does not report L3-hardware-offloaded traffic, so it is blind
+   precisely on switch-offloaded home-router bridges and needs write access
+   anyway; the section now says why it is deliberately not on the roadmap and
+   links the Torch/Traffic-Flow manual pages. The read-only-user and API
+   service instructions now link the official manual (`/user`,
+   `/user/group`, `/ip/service`) — all link targets verified live (HTTP 200).
+   Verified: live smoke poll — health `voltage 23.9 V / temperature 38 C`,
+   pools `dhcp 10/252 + Server 0/252 + dhcp_vlan2 1/101`, both exposed on
+   `/api/state`; all unit suites PASS; JS `node --check` OK; browser suites
+   not re-run (no playwright on host; cards are text-only, no innerHTML).
+
+## 2026-11-05
 1. **Batch #44 — IPv6: NDP presence, v6 conntrack merged, v6 flows per device** —
    every poll path was `/ip/*` only, so the dashboard was blind to RouterOS's
    separate IPv6 tables (official manual: connection tracking lives in
