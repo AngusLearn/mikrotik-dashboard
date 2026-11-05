@@ -179,7 +179,7 @@ svg text{user-select:none}
 </div>
 
 <div class="panel" style="margin-bottom:14px">
-  <h2>Network map <span class="sub" style="text-transform:none">moving dashes = live traffic · click a device for details</span><button class="btn" id="mapsort" title="Toggle device order: current speed ⇄ IP address" style="float:right;font-size:12px;padding:2px 10px">⇅ Speed</button></h2>
+  <h2>Network map <span class="sub" style="text-transform:none">moving dashes = live traffic · click a device for details</span><button class="btn" id="mapsort" title="Toggle device order: current speed ⇄ IP address" style="float:right;font-size:12px;padding:2px 10px">⇅ Speed</button><button class="btn" id="mapmode" title="Toggle map view: by network/VLAN ⇄ by physical switch port (bridge FDB)" style="float:right;font-size:12px;padding:2px 10px;margin-right:8px">🗺 Nets</button></h2>
   <div class="mapwrap">
     <div id="topo"></div>
     <aside class="dpanel" id="devpanel">
@@ -440,6 +440,16 @@ function applyMapSort(t) {
     localStorage.setItem('mapSort', mapSort); lbl();
     if (window._lastState) renderTopo(window._lastState); };
   lbl(); }
+// map grouping: Nets (VLAN / L3 interface, default) or Ports (physical
+// bridge port the FDB learned each device on). Persisted like mapSort.
+let mapMode = localStorage.getItem('mapMode') || 'nets';
+{ const b = $('#mapmode'), lbl = () =>
+    b.textContent = mapMode === 'nets' ? '🗺 Nets' : '🔌 Ports';
+  b.onclick = () => { mapMode = mapMode === 'nets' ? 'ports' : 'nets';
+    localStorage.setItem('mapMode', mapMode); lbl();
+    _topoSig = '';   // force a rebuild: the two views share no layout
+    if (window._lastState) renderTopo(window._lastState); };
+  lbl(); }
 
 function topoLayout(s){
  const t=s.topo;
@@ -571,6 +581,9 @@ function liveTopo(s,spd){
   setE('dev:'+mac,d.rx_bps+d.tx_bps)}
 }
 function renderTopo(s){
+ if(mapMode==='ports'&&s.topo_ports&&s.topo_ports.nets&&s.topo_ports.nets.length)
+   s=Object.assign({},s,{topo:s.topo_ports});   // Ports view: same renderer,
+                                                // devices regrouped by bridge port
  const t=s.topo;
  if(!t||!t.nets||!t.nets.length||!t.nets.some(n=>n.groups.some(g=>g.devices.length))){
   _topoSig='';cancelAnimationFrame(_tAnim);_tS=null;_tY=null;

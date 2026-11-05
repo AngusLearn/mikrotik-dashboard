@@ -1,6 +1,25 @@
 # Changelog
 
 ## 2026-11-05
+5. **Batch #47 — "Ports" map mode** — new toggle next to ⇅ Sort on the
+   network map: **🗺 Nets ⇄ 🔌 Ports**. Ports mode regroups the same device
+   chips under their PHYSICAL bridge port (🔌 ether5, ether10, bonding-PVE,
+   …) learned from the bridge FDB — answering "where is this device plugged
+   in" from the router's point of view. Rules: only member ports that
+   actually learned a MAC appear; WiFi stations group under **WLAN**;
+   devices with a live identity but aged-out FDB (mostly offline leases)
+   collect under **idle** instead of vanishing; a port is flagged trunk when
+   it is a TAGGED member of any VLAN (`/interface/bridge/vlan`). Renderer
+   unchanged — the existing `groups[].port` column machinery is reused with
+   a second backend graph (`topo_ports`), and each device row now also
+   carries `port`. Three new read-only polls joined in pure functions
+   (`bridge_port_map`, `topo_group_devices`) with `tests/test_ports_unit.py`
+   (FDB join, trunk/access classification, ordering, empty input, the
+   empty-group default-map regression guard). Live smoke: 13/29 devices
+   mapped to physical ports (Pixel→ether10, orangepi→ether5, PVE VMs→
+   bonding-PVE, VLAN2→ether8), VLAN2 net correct.
+
+## 2026-11-05
 4. **CPU / Memory card: dual load bars** — the card used one shared gauge
    for `cpu% / mem%`, which read wrong (a bar can't show two numbers). Now
    two labelled rows — `CPU ▓▓░ 34%`, `MEM ▓░░ 11%` — each colored by
