@@ -620,7 +620,8 @@ async function poll(){
   $('#card-pools').hidden=!ps.length;
   if(ps.length){const u=ps.reduce((a,p)=>a+p.used,0),t=ps.reduce((a,p)=>a+p.used+p.avail,0);
    const worst=Math.max(...ps.map(p=>p.used+p.avail?p.used/(p.used+p.avail):0));
-   cp.textContent=`${u} / ${t}`;cp.style.color=worst>0.9?'#d29922':'';}}
+   cp.textContent=`${u} / ${t}`;cp.style.color=worst>0.9?'#d29922':'';
+   cp.parentElement.title=ps.map(p=>`${p.name}: ${p.used} / ${p.used+p.avail}`).join('\n');}}
  $('#fh-now').textContent=`· now: ${t.flows??'—'} flows · ${t.active_hosts??'—'} active hosts`;
  devices=s.devices||[];
  renderNetBar(s);

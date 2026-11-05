@@ -22,6 +22,10 @@
    pools `dhcp 10/252 + Server 0/252 + dhcp_vlan2 1/101`, both exposed on
    `/api/state`; all unit suites PASS; JS `node --check` OK; browser suites
    not re-run (no playwright on host; cards are text-only, no innerHTML).
+   Follow-up fix: a pool is only counted when an enabled DHCP server
+   references it or it holds leases — the live router's orphan `Server` pool
+   (10.0.10.2-253, zero leases, no server) silently inflated capacity to 605
+   instead of the real 353; card hover now lists the per-pool breakdown.
 
 ## 2026-11-05
 1. **Batch #44 — IPv6: NDP presence, v6 conntrack merged, v6 flows per device** —
