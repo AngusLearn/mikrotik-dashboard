@@ -959,9 +959,15 @@ class RouterMonitor(threading.Thread):
                   for h in (api_fetch_all(api, "/system/health") or [])
                   if h.get("name")]
         pools = []
+        # an /ip/pool entry is only worth counting when something actively
+        # uses it: an enabled DHCP server references it, or it actually holds
+        # leases (PPPoE remote-address pools). Orphan pools from dead configs
+        # (0 used, no server) would inflate the capacity number silently.
+        dhcp_pools = {p.get("address-pool", "")
+                      for p in (api_fetch_all(api, "/ip/dhcp-server") or [])}
         for p in api_fetch_all(api, "/ip/pool") or []:
             used, avail = int(as_num(p.get("used"), 0)), int(as_num(p.get("available"), 0))
-            if used + avail > 0:
+            if used + avail > 0 and (p.get("name", "") in dhcp_pools or used > 0):
                 pools.append({"name": p.get("name", ""), "used": used, "avail": avail})
 
         # ---- blocked devices
