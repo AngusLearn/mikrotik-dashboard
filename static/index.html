@@ -145,7 +145,9 @@ svg text{user-select:none}
     <div class="gauge"><i id="g-cpu" style="width:0%"></i></div></div>
   <div class="card"><div class="k">Uptime</div><div class="v" id="c-up" style="font-size:15px">—</div></div>
   <div class="card" id="card-health" hidden title="router hardware sensors (/system/health — availability depends on the board)"><div class="k">Router health</div><div class="v" id="c-health" style="font-size:15px">—</div></div>
-  <div class="card" id="card-pools" hidden title="DHCP address pools (/ip/pool): leases in use / total capacity — amber when any pool is over 90% full"><div class="k">DHCP leases</div><div class="v" id="c-pools" style="font-size:15px">—</div></div>
+  <div class="card" id="card-pools" hidden style="cursor:pointer;position:relative" title="DHCP address pools (/ip/pool): leases in use / total capacity — amber when any pool is over 90% full. Click to expand the lease list."><div class="k">DHCP leases <span id="pools-caret" style="float:right">▾</span></div><div class="v" id="c-pools" style="font-size:15px">—</div>
+    <div id="lease-pop" hidden style="position:absolute;top:calc(100% + 6px);left:0;z-index:40;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 28px rgba(0,0,0,.5);padding:10px 12px;min-width:430px;max-width:min(560px,92vw);max-height:340px;overflow:auto;font-size:12.5px;cursor:auto"></div>
+  </div>
 </div>
 
 <div class="row2" style="margin-bottom:14px">
@@ -621,7 +623,9 @@ async function poll(){
   if(ps.length){const u=ps.reduce((a,p)=>a+p.used,0),t=ps.reduce((a,p)=>a+p.used+p.avail,0);
    const worst=Math.max(...ps.map(p=>p.used+p.avail?p.used/(p.used+p.avail):0));
    cp.textContent=`${u} / ${t}`;cp.style.color=worst>0.9?'#d29922':'';
-   cp.parentElement.title=ps.map(p=>`${p.name}: ${p.used} / ${p.used+p.avail}`).join('\n');}}
+   const NL=String.fromCharCode(10);
+   cp.parentElement.title=ps.map(p=>`${p.name}: ${p.used} / ${p.used+p.avail}`).join(NL)+NL+'click to expand the lease list';
+   if(_leasesOpen)renderLeasePop(ps,s.leases||[]);}}
  $('#fh-now').textContent=`· now: ${t.flows??'—'} flows · ${t.active_hosts??'—'} active hosts`;
  devices=s.devices||[];
  renderNetBar(s);
@@ -755,6 +759,32 @@ async function refreshDevChart(){
   dlgChart.update('none');
  }catch(e){/* transient fetch/auth errors: next tick retries */}
 }
+
+function renderLeasePop(ps,ls){
+ const pop=$('#lease-pop');
+ const head=ps.map(p=>`${esc(p.name)}: <b style="color:var(--fg)">${p.used} / ${p.used+p.avail}</b>`).join(' &nbsp;·&nbsp; ');
+ pop.innerHTML=`<div style="color:var(--muted);margin-bottom:6px">${head}</div>`
+  +(ls.length?`<table style="border-collapse:collapse;width:100%">`+ls.map(L=>{
+    const dot=L.status==='bound'?'<span style="color:var(--dl)">●</span>':'<span style="color:var(--muted)">○</span>';
+    const when=L.status==='bound'?(L.expires?`expires ${esc(L.expires)}`:'bound')
+      :esc(L.last_seen?`idle ${L.last_seen}`:L.status||'?');
+    return `<tr style="border-top:1px solid var(--border)">
+     <td style="padding:3px 7px 3px 0">${dot}</td>
+     <td style="padding:3px 7px 3px 0;font-variant-numeric:tabular-nums">${esc(L.ip)}</td>
+     <td style="padding:3px 7px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(L.host)||'<span style="color:var(--muted)">—</span>'}</td>
+     <td style="padding:3px 7px;color:var(--muted);font-size:11px">${esc(L.mac)}</td>
+     <td style="padding:3px 0;text-align:right;color:var(--muted);white-space:nowrap">${when}</td></tr>`;
+   }).join('')+`</table>`
+   :'<div style="color:var(--muted)">no DHCP leases</div>');
+}
+let _leasesOpen=false;
+function setLeaseOpen(open){
+ _leasesOpen=open;$('#lease-pop').hidden=!open;$('#pools-caret').textContent=open?'▴':'▾';
+ if(open){const st=window._lastState||{};renderLeasePop(st.pools||[],st.leases||[]);}
+}
+$('#card-pools').onclick=e=>{if(e.target.closest('#lease-pop'))return;setLeaseOpen(!_leasesOpen);e.stopPropagation();};
+document.addEventListener('click',e=>{if(_leasesOpen&&!e.target.closest('#card-pools'))setLeaseOpen(false);});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&_leasesOpen)setLeaseOpen(false);});
 
 // ---- live flows (who this device is talking to) inside the device dialog
 let _flIP='', _flTab='all', _fl=null, _flTimer=null;
