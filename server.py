@@ -273,6 +273,7 @@ STATE = {
     "totals": {},
     "nets": {},
     "topo": {},
+    "topo_ports": {},
     "config": {},
     "wifi": [],
     "health": [],
@@ -392,6 +393,93 @@ def device_present(mac, ips, rate_bps, arp_ips, mndp_macs, associated=False,
             or mac.upper() in v6_macs
             or any(ip in arp_ips for ip in ips)
             or rate_bps > ONLINE_MIN_BPS)
+
+
+def bridge_port_map(hosts, bports, bvlan):
+    """Join the bridge FDB to physical ports for the Ports map mode.
+
+    hosts   : rows of /interface/bridge/host (MAC learn table)
+    bports  : rows of /interface/bridge/port  (member ports, pvid)
+    bvlan   : rows of /interface/bridge/vlan  (tagged/untagged members)
+
+    Returns (mac2port, portmeta):
+      mac2port  MAC(upper) -> member port that learned it. Entries whose
+                interface is not a member port (the bridge's own MAC, local
+                VLAN interfaces) are skipped — they say nothing about wiring.
+      portmeta  port -> {bridges, pvids, tagged, untagged, trunk}. A port is
+                a trunk when it is a TAGGED member of any VLAN (carries
+                traffic beyond its native pvid); access ports are untagged
+                only. Pure function: unit-testable without a router.
+    """
+    members = {}
+    for p in bports or []:
+        iface, br = p.get("interface", ""), p.get("bridge", "")
+        if iface and br:
+            members.setdefault(iface, set()).add(br)
+    portmeta = {name: {"bridges": sorted(brs), "pvids": set(),
+                       "tagged": set(), "untagged": set()}
+                for name, brs in members.items()}
+    for p in bports or []:
+        m = portmeta.get(p.get("interface", ""))
+        pvid = p.get("pvid")
+        if m and pvid not in (None, ""):
+            try:
+                m["pvids"].add(int(as_num(pvid)))
+            except (TypeError, ValueError):
+                pass
+    for v in bvlan or []:
+        try:
+            vid = int(as_num(v.get("vlan-ids")))
+        except (TypeError, ValueError):
+            continue
+        for who in ("tagged", "untagged"):
+            for iface in str(v.get(who, "") or "").split(","):
+                iface = iface.strip()
+                if iface in portmeta:
+                    portmeta[iface][who].add(vid)
+    mac2port = {}
+    for h in hosts or []:
+        mac = (h.get("mac-address") or "").upper()
+        iface = h.get("interface") or ""
+        if mac and iface in members:
+            mac2port[mac] = iface
+    for m in portmeta.values():
+        m["trunk"] = bool(m["tagged"])
+        for k in ("pvids", "tagged", "untagged"):
+            m[k] = sorted(m[k])
+    return mac2port, portmeta
+
+
+def topo_group_devices(devices_out, key):
+    """Group LAN devices into the network-map `nets[].groups[]` shape.
+    `key(dev)` picks the mid column: L3 interface for the default map (empty
+    = hang straight off the net hub, the historical behavior), physical
+    switch port for the Ports map (where empty becomes an explicit 'idle'
+    group — a live device whose FDB entry aged out shouldn't vanish)."""
+    by_key = {}
+    for dev in devices_out:
+        lbl = dev.get("net") or "other"
+        if lbl == "other" or not [ip for ip in dev.get("ips") or [] if ip]:
+            continue
+        k = key(dev)
+        by_key.setdefault(lbl, {}).setdefault(k, []).append(
+            {"mac": dev["mac"], "ip": dev["ip"],
+             "name": dev["hostname"] or dev.get("vendor") or dev["ip"],
+             "fw": dev.get("fw") or "",
+             "board": dev.get("board") or dev.get("vendor") or "",
+             "wlan": (dev.get("wlan") or {}).get("ssid") and {
+                 c: (dev["wlan"].get(c) or "").replace("Atheros ", "")
+                 for c in ("ssid", "signal", "chipset", "band")}})
+    nets = []
+    for lbl, groups in sorted(by_key.items()):
+        nets.append({
+            "label": lbl,
+            "groups": [{"port": p, "devices": ds}
+                       for p, ds in sorted(
+                           groups.items(),
+                           key=lambda kv: (kv[0] in ("idle", "WLAN"),
+                                           -len(kv[1]), kv[0]))]})
+    return nets
 
 
 class RouterMonitor(threading.Thread):
@@ -949,6 +1037,22 @@ class RouterMonitor(threading.Thread):
             info["stations"] = sum(1 for a in wifi_assoc.values() if a.get("radio") == name)
             wifi_out.append(info)
 
+        # ---- physical switch ports (Ports map mode). The bridge FDB knows
+        # which member port learned each MAC; that IS "where is it plugged
+        # in" from the router's point of view. api_fetch_all: read-only and
+        # never fatal (a router with no bridge at all just gets no ports).
+        mac2port, portmeta = bridge_port_map(
+            api_fetch_all(api, "/interface/bridge/host"),
+            api_fetch_all(api, "/interface/bridge/port"),
+            api_fetch_all(api, "/interface/bridge/vlan"))
+        for dev in devices_out:
+            if dev.get("wlan"):
+                dev["port"] = "WLAN"
+            else:
+                p = mac2port.get((dev.get("mac") or "").upper())
+                if p:
+                    dev["port"] = p
+
         # ---- hardware health + DHCP pool headroom (informational).
         # api_fetch_all on purpose, NOT self.fetch: older RouterOS has no
         # /system/health, and a path that permanently fails must never flip
@@ -1055,28 +1159,15 @@ class RouterMonitor(threading.Thread):
             n["tx_bps"] += d["tx_bps"]
 
         # ---- topology graph for the network map
-        topo_nets = []
-        by_net = {}
-        for dev in devices_out:
-            lbl = dev.get("net") or "other"
-            if lbl == "other" or not dev["ips"]:
-                continue
-            iface = (dev.get("interface") or "").split(",")[0]
-            net_iface = lbl.split(" (")[0]
-            group = iface if iface and iface != net_iface else ""
-            by_net.setdefault(lbl, {}).setdefault(group, []).append(
-                {"mac": dev["mac"], "ip": dev["ip"],
-                 "name": dev["hostname"] or dev["vendor"] or dev["ip"],
-                 "fw": dev.get("fw") or "",
-                 "board": dev.get("board") or dev.get("vendor") or "",
-                 "wlan": (dev.get("wlan") or {}).get("ssid") and {
-                     k: (dev["wlan"].get(k) or "").replace("Atheros ", "")
-                     for k in ("ssid", "signal", "chipset", "band")}})
-        for lbl, groups in sorted(by_net.items()):
-            topo_nets.append({
-                "label": lbl,
-                "groups": [{"port": p, "devices": ds}
-                           for p, ds in sorted(groups.items(), key=lambda kv: -len(kv[1]))]})
+        # default mode groups by L3 interface (VLAN sub-interfaces hang off
+        # the net hub); Ports mode groups by physical switch port from the FDB
+        topo_nets = topo_group_devices(
+            devices_out,
+            lambda dev: (lambda i, ni: i if i and i != ni else "")(
+                (dev.get("interface") or "").split(",")[0],
+                (dev.get("net") or "").split(" (")[0]))
+        topo_ports_nets = topo_group_devices(
+            devices_out, lambda dev: dev.get("port") or "idle")
         topo = {
             "wan": {"name": (wan_meta[0]["name"] if wan_meta else "wan"),
                     "rate": (wan_meta[0].get("rate", "") if wan_meta else ""),
@@ -1084,6 +1175,7 @@ class RouterMonitor(threading.Thread):
             "router": {"board": system.get("board", ""), "version": system.get("version", "")},
             "nets": topo_nets,
         }
+        topo_ports = dict(topo, nets=topo_ports_nets)
         with _state_lock:
             STATE["system"] = system
             STATE["wan"] = {
@@ -1097,6 +1189,7 @@ class RouterMonitor(threading.Thread):
             STATE["totals"] = totals
             STATE["nets"] = netsum
             STATE["topo"] = topo
+            STATE["topo_ports"] = topo_ports
             STATE["wifi"] = wifi_out
             STATE["health"] = health
             STATE["pools"] = pools
@@ -1595,6 +1688,7 @@ def api_state():
             "health": STATE.get("health", []),
             "pools": STATE.get("pools", []),
             "topo": STATE["topo"],
+            "topo_ports": STATE.get("topo_ports", {}),
             "config": STATE["config"] or {"host": load_config()["host"]},
         }
 
@@ -1789,7 +1883,7 @@ def _clear_display(msg: str) -> None:
     with _state_lock:
         STATE.update({"connected": False, "last_error": msg, "updated": 0.0,
                       "system": {}, "wan": {}, "devices": [], "totals": {},
-                      "nets": {}, "topo": {}, "wifi": [],
+                      "nets": {}, "topo": {}, "topo_ports": {}, "wifi": [],
                       "health": [], "pools": []})
 
 
