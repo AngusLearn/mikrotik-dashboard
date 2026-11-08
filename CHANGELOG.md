@@ -1,6 +1,18 @@
 # Changelog
 
 ## 2026-11-05
+15. **Chart fixes: re-enable toggle + human-readable tooltips** — (a) the
+    hand-rolled legend onClick from #14 toggled dataset visibility but
+    skipped Chart.js v4's `chart.show()/hide()` path, which also maintains
+    the legend item's own hidden flag — so clicking a hidden device back on
+    did nothing. The handler now delegates to
+    `Chart.defaults.plugins.legend.onClick` (battle-tested both ways) and
+    only *records* the resulting state into the per-mode hidden-label map.
+    (b) Tooltips on the WAN/per-device chart and the device history dialog
+    showed raw numbers (`4,312,123`); they now format through `fmtBps`
+    like the axis (`Tran-Storage: 4.3 Mbps`). node --check OK.
+
+## 2026-11-05
 14. **Per-device traffic: legend hide now sticks** — toggling a device off
     in the chart legend was undone by the next auto-refresh: loadWan
     replaces `data.datasets` with fresh objects every cycle, and Chart.js

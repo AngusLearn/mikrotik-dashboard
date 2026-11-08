@@ -362,13 +362,13 @@ const wanChart=new Chart($('#wanChart'),{type:'line',data:{datasets:[
    ticks:{maxTicksLimit:8}},
    y:{beginAtZero:true,ticks:{callback:v=>fmtBps(v)}}},
   plugins:{legend:{labels:{boxWidth:12},
-   onClick:(e,item,legend)=>{   // default toggle + remember it
-    const ch=legend.chart,lbl=ch.data.datasets[item.datasetIndex].label,
-          vis=ch.getDataVisibility(item.datasetIndex);
-    ch.setDatasetVisibility(item.datasetIndex,!vis);
-    const s=_wanHidden.get(wanMode)||new Set();
-    if(vis)s.add(lbl);else s.delete(lbl);
-    _wanHidden.set(wanMode,s);ch.update();}}},
+   onClick:(e,item,legend)=>{   // Chart.js default toggle (its show/hide path
+    Chart.defaults.plugins.legend.onClick(e,item,legend);   // is battle-tested),
+    const ch=legend.chart,lbl=ch.data.datasets[item.datasetIndex].label;
+    const s=_wanHidden.get(wanMode)||new Set();        // then just remember it
+    if(!ch.getDataVisibility(item.datasetIndex))s.add(lbl);else s.delete(lbl);
+    _wanHidden.set(wanMode,s);}},
+   tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmtBps(c.parsed.y)}`}}},
   parsing:false,maintainAspectRatio:false}});
 // traffic-split donut palette: the dashboard's established category colors
 // (accent, download green, upload amber, red, purple, cyan — others slate)
@@ -864,7 +864,8 @@ async function openDev(ip,mac){
   {label:'Upload',data:s.map(x=>({x:x[0]*1000,y:x[2]})),borderColor:'#d29922',
    backgroundColor:'rgba(210,153,34,.12)',fill:true,pointRadius:0,borderWidth:1.5,tension:.25}]},
   options:{animation:false,maintainAspectRatio:false,scales:{x:{type:'time',time:{displayFormats:{hour:'HH:mm',minute:'HH:mm'}}},
-   y:{beginAtZero:true,ticks:{callback:v=>fmtBps(v)}}},parsing:false}});
+   y:{beginAtZero:true,ticks:{callback:v=>fmtBps(v)}}},
+   plugins:{tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmtBps(c.parsed.y)}`}}},parsing:false}});
  // live refresh: chart used to be a snapshot taken at click time and never moved
  clearInterval(_dcTimer);
  _dcTimer=setInterval(refreshDevChart,5000);
