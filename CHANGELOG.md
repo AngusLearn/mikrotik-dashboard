@@ -1,6 +1,18 @@
 # Changelog
 
 ## 2026-11-05
+11. **Login page: particle-network backdrop** — constellation effect behind
+    the login card (canvas 2D + rAF): 26–70 dots (count scales with viewport
+    area) drift slowly and bounce off the edges; pairs within a viewport-
+    scaled link distance auto-connect with opacity fading by distance; the
+    cursor gently attracts nearby dots and links to them in the accent color.
+    Colors are read from the page's own `--muted`/`--accent` variables at
+    runtime — no new palette. Canvas sized by devicePixelRatio; form sits on
+    an opaque layer so the title stays crisp; motion collapses to a single
+    static frame under prefers-reduced-motion and the loop pauses when the
+    tab is hidden. node --check OK on both scripts.
+
+## 2026-11-05
 10. **Direction-coded packet dots** — the round-tripping accent dot became
     TWO dots per connector: a green one riding hub->device (download) and
     an amber one riding device->hub (upload), matching the map's existing
