@@ -1,6 +1,16 @@
 # Changelog
 
 ## 2026-11-05
+14. **Per-device traffic: legend hide now sticks** — toggling a device off
+    in the chart legend was undone by the next auto-refresh: loadWan
+    replaces `data.datasets` with fresh objects every cycle, and Chart.js
+    keeps visibility on the dataset meta, so every refresh silently
+    re-enabled all lines. Legend clicks now record (mode -> hidden labels)
+    and loadWan re-applies visibility by LABEL after every rebuild —
+    keyed per mode (total/↓/↑) and by label rather than index, so the
+    top-N reordering can't misalign hides either.
+
+## 2026-11-05
 13. **Protocol distribution: animated donut too** — the second Chart.js
     doughnut is replaced with the same sequential-draw donut: protocol
     share by bytes over the selected range, same clockwise draw-in from

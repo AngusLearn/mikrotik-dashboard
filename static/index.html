@@ -350,6 +350,8 @@ const fmtB=b=>{if(b==null)return'—';const u=['B','KiB','MiB','GiB','TiB'];let 
 const chartFont={size:10};
 Chart.defaults.color='#8494a7';Chart.defaults.borderColor='#1e2936';Chart.defaults.font.size=10;
 
+const _wanHidden=new Map();   // wanMode -> Set(hidden labels); survives the
+                              // per-refresh dataset rebuild (see loadWan)
 const wanChart=new Chart($('#wanChart'),{type:'line',data:{datasets:[
  {label:'Download',data:[],borderColor:'#3fb950',backgroundColor:'rgba(63,185,80,.12)',fill:true,
   borderWidth:1.6,pointRadius:0,tension:.25},
@@ -359,7 +361,15 @@ const wanChart=new Chart($('#wanChart'),{type:'line',data:{datasets:[
   scales:{x:{type:'time',time:{displayFormats:{hour:'HH:mm',minute:'HH:mm',second:'HH:mm:ss'}},
    ticks:{maxTicksLimit:8}},
    y:{beginAtZero:true,ticks:{callback:v=>fmtBps(v)}}},
-  plugins:{legend:{labels:{boxWidth:12}}},parsing:false,maintainAspectRatio:false}});
+  plugins:{legend:{labels:{boxWidth:12},
+   onClick:(e,item,legend)=>{   // default toggle + remember it
+    const ch=legend.chart,lbl=ch.data.datasets[item.datasetIndex].label,
+          vis=ch.getDataVisibility(item.datasetIndex);
+    ch.setDatasetVisibility(item.datasetIndex,!vis);
+    const s=_wanHidden.get(wanMode)||new Set();
+    if(vis)s.add(lbl);else s.delete(lbl);
+    _wanHidden.set(wanMode,s);ch.update();}}},
+  parsing:false,maintainAspectRatio:false}});
 // traffic-split donut palette: the dashboard's established category colors
 // (accent, download green, upload amber, red, purple, cyan — others slate)
 const DSPLIT=['#4cc2ff','#3fb950','#d29922','#f85149','#a371f7','#39c5cf'];
@@ -399,6 +409,12 @@ async function loadWan(){
     borderColor:'#31445c',backgroundColor:'#31445c55',fill:'origin',borderWidth:1,pointRadius:0,stepped:'middle'});
   wanChart.data.datasets=ds;
  }
+ // re-apply remembered legend toggles: datasets were just replaced with
+ // fresh objects, which resets Chart.js visibility (the "hide won't stick"
+ // bug). Keyed by mode+label, so reordering the top-N list can't misalign.
+ {const hid=_wanHidden.get(wanMode);
+  wanChart.data.datasets.forEach((d,i)=>
+   wanChart.setDatasetVisibility(i,!hid||!hid.has(d.label)));}
  window._diagPts=(wanChart.data.datasets[0]?.data||[]).length;
  wanChart.update('none');
 }
