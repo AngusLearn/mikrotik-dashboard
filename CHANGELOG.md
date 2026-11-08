@@ -1,6 +1,18 @@
 # Changelog
 
 ## 2026-11-08
+19. **Per-device traffic: lines are no longer stacked** — with `y.stacked` on,
+    hiding any device silently moved EVERY layer drawn above it down and
+    rescaled the axis to the new sum (screenshots: 250 Mbps axis → 10 Mbps
+    after hiding one device, making whole other devices' spikes look
+    disabled too). Each device now draws from zero with a translucent fill,
+    largest first, so toggling one legend entry changes exactly one line:
+    verified headless — with the old stacked code, hiding the middle device
+    shifted another line's pixel y (65→56) and the axis max (30→16 Mbps);
+    with the fix both are unchanged while the hidden line's own visibility
+    flips normally. All earlier suites (disable persistence 12, tooltip 6)
+    still pass; zero pageerrors. node --check OK.
+
 18. **Per-device traffic: colors and legend order are per DEVICE now** — the
     top-N palette and legend positions were assigned by current traffic RANK,
     recomputed every 3 s refresh. When two busy devices (MS-S1-MAX-CachyOS and

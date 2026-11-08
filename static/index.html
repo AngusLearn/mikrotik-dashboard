@@ -403,7 +403,11 @@ function stableTop(mode,keys){   // keep the previous arrangement while the
 async function loadWan(){
  const buckets={15:5,60:30,360:120,1440:300};
  $('#wan-title').textContent=wanMode==='total'?'WAN throughput':'Per-device traffic';
- wanChart.options.scales.y.stacked=(wanMode!=='total');
+ // never stacked: a stacked chart silently moves EVERY layer above the one
+ // you hide and rescales to the new sum, so "disable one device" looked like
+ // it disabled others too. Each device now draws from zero, on top of each
+ // other, with a translucent fill (newest/hidden toggles touch only itself).
+ wanChart.options.scales.y.stacked=false;
  if(wanMode==='total'){
   const r=await fetch(`/api/history?range_min=${rangeMin}&bucket=${buckets[rangeMin]||5}`);
   const d=await r.json();
