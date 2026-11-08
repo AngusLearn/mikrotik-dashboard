@@ -252,7 +252,7 @@ svg text{user-select:none}
   </div>
   <div class="panel">
     <h2><span>Protocol distribution</span><span class="sub" id="vol-lbl"></span></h2>
-    <div style="position:relative;height:230px"><canvas id="protoChart"></canvas></div>
+    <div class="donutwrap" id="protoDonut"></div>
   </div>
 </div>
 
@@ -955,12 +955,12 @@ $('#f-in').onclick=()=>{_flTab='in';$('#f-in').classList.add('active');$('#f-all
 // neighbours. Entry animation = dasharray 0->final with staggered delays,
 // legend rows slide in from the right on the same schedule — a hand-rolled
 // equivalent of GSAP's DrawSVG sequencing, no paid plugin needed.
-let _donutSig='';
-function renderDonut(segs){
- const wrap=$('#donut');if(!wrap)return;
+function renderDonut(segs, wrapSel='#donut', subLabel){
+ const wrap=typeof wrapSel==='string'?document.querySelector(wrapSel):wrapSel;
+ if(!wrap)return;
  const total=segs.reduce((a,s)=>a+s.v,0)||1;
  const sig=segs.map(s=>s.n).join('|');
- const fresh=sig!==_donutSig; _donutSig=sig;
+ const fresh=sig!==wrap.dataset.dsig; wrap.dataset.dsig=sig;
  const G=segs.length>1?0.9:0;                 // gap between segments, circle-%
  let start=0,arcs='',leg='';
  segs.forEach((s,i)=>{
@@ -981,7 +981,7 @@ function renderDonut(segs){
    <circle cx="80" cy="80" r="60" fill="none" stroke="var(--panel2)" stroke-width="18"/>
    <g transform="rotate(-90 80 80)">${arcs}</g>
    <text class="dtot" x="80" y="78" text-anchor="middle">${fmtB(total)}</text>
-   <text class="dsub" x="80" y="94" text-anchor="middle">TOTAL · LAST HOUR</text>
+   <text class="dsub" x="80" y="94" text-anchor="middle">${esc(subLabel||'TOTAL · LAST HOUR')}</text>
   </svg><ul class="dlegend">${leg}</ul>`;
  // second frame: start from the current (empty) dasharray so the
  // transition actually runs; stagger each segment's growth
@@ -1063,20 +1063,17 @@ const flowChart=new Chart($('#flowChart'),{type:'line',data:{datasets:[
    y:{beginAtZero:true,position:'left',ticks:{precision:0}},
    y1:{beginAtZero:true,position:'right',grid:{drawOnChartArea:false},ticks:{precision:0}}},
   plugins:{legend:{labels:{boxWidth:12}}},parsing:false}});
-const protoChart=new Chart($('#protoChart'),{type:'doughnut',data:{labels:[],datasets:[
- {data:[],backgroundColor:['#4cc2ff','#d29922','#f85149','#a371f7','#3fb950','#31445c'],borderWidth:0}]},
- options:{plugins:{legend:{position:'right',labels:{boxWidth:10,font:{size:11}}}},
-  cutout:'62%',maintainAspectRatio:false}});
 async function loadAnalytics(){
  try{
   const a=await(await fetch('/api/analytics/history?range_min='+aRange)).json();
   flowChart.data.datasets[0].data=a.flows.map(r=>({x:r[0]*1000,y:r[1]}));
   flowChart.data.datasets[1].data=a.flows.map(r=>({x:r[0]*1000,y:r[2]}));
   flowChart.update('none');
-  const pr=a.protocols.filter(p=>(p.rx+p.tx)>0);
-  protoChart.data.labels=pr.map(p=>p.key.toUpperCase());
-  protoChart.data.datasets[0].data=pr.map(p=>p.rx+p.tx);
-  protoChart.update('none');
+  const pr=a.protocols.filter(p=>(p.rx+p.tx)>0)
+   .map((p,i)=>({n:p.key.toUpperCase(),v:p.rx+p.tx,c:DSPLIT[i%DSPLIT.length]}));
+  if(!pr.length)pr.push({n:'no protocol traffic',v:1,c:'#31445c'});
+  renderDonut(pr,'#protoDonut','TOTAL · '+(aRange>=1440?(aRange/1440)+' DAY'+(aRange>1440?'S':'')
+    :aRange>=60?(aRange/60)+' HR':aRange+' MIN'));
   const v=a.volume||{rx:0,tx:0};
   $('#vol-lbl').textContent=`${fmtB(v.rx+v.tx)} total · ↓${fmtB(v.rx)} ↑${fmtB(v.tx)}`;
   $('#ports-range-lbl').textContent=(document.querySelector('[data-arange].active')?.textContent)||'';

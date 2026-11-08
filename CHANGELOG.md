@@ -1,6 +1,16 @@
 # Changelog
 
 ## 2026-11-05
+13. **Protocol distribution: animated donut too** — the second Chart.js
+    doughnut is replaced with the same sequential-draw donut: protocol
+    share by bytes over the selected range, same clockwise draw-in from
+    12 o'clock, gaps, staggered legend, existing palette. renderDonut is
+    now generic (`segs, wrapSel, subLabel`, per-wrap freshness via
+    `dataset.dsig` so the two donuts animate independently); center label
+    humanizes the analytics range (15 MIN / 6 HR / 1 DAY). protoChart fully
+    removed. node --check OK.
+
+## 2026-11-05
 12. **Traffic split: animated donut segments** — the Chart.js doughnut is
     replaced by a hand-built SVG donut with the requested sequential
     draw-in: segments start at 12 o'clock (group `rotate(-90)`), the first
