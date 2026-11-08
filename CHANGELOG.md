@@ -1,6 +1,17 @@
 # Changelog
 
 ## 2026-11-08
+17. **Per-device traffic: no stale tooltip after a legend click** — a tooltip
+    left open while you clicked a legend entry stayed on screen and kept
+    listing the dataset you had just hidden (screenshot: struck-through
+    MS-S1-MAX still showing 10.5 Mbps on a chart rescaled to 900 Kbps — the
+    axis rescale is correct Chart.js behavior once the dominant series is
+    hidden; the ghost tooltip entry was not). The legend handler now closes
+    the tooltip on click, and a `filter` prevents hidden datasets from ever
+    appearing in a tooltip. Verified headless: tooltip opacity 0 + zero
+    active elements right after the legend click; fresh hover lists only
+    visible datasets; #16's 12-check disable suite still passes. node --check OK.
+
 16. **Per-device traffic: disables finally stick** — #15's legend handler
     delegated the toggle to Chart.js but still *recorded* the state with
     `chart.getDataVisibility()`, which reads the `_hiddenIndices` map that

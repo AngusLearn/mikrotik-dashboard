@@ -365,6 +365,9 @@ const wanChart=new Chart($('#wanChart'),{type:'line',data:{datasets:[
    onClick:(e,item,legend)=>{   // Chart.js default toggle (its show/hide path
     Chart.defaults.plugins.legend.onClick(e,item,legend);   // is battle-tested),
     const ch=legend.chart,lbl=ch.data.datasets[item.datasetIndex].label;
+    ch.tooltip.setActiveElements([], {x:0,y:0});   // a legend click under the
+    ch.update('none');                             // cursor must not leave a
+                                                   // stale tooltip behind
     const s=_wanHidden.get(wanMode)||new Set();        // then just remember it.
     // isDatasetVisible reads meta.hidden — the SAME store chart.hide()/show()
     // (the default toggle) writes. getDataVisibility reads _hiddenIndices,
@@ -372,7 +375,8 @@ const wanChart=new Chart($('#wanChart'),{type:'line',data:{datasets:[
     // disables were never recorded (hidden lines reappeared on next refresh).
     if(!ch.isDatasetVisible(item.datasetIndex))s.add(lbl);else s.delete(lbl);
     _wanHidden.set(wanMode,s);}},
-   tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmtBps(c.parsed.y)}`}}},
+   tooltip:{filter:t=>wanChart.isDatasetVisible(t.datasetIndex),   // never list
+    callbacks:{label:c=>` ${c.dataset.label}: ${fmtBps(c.parsed.y)}`}}},
   parsing:false,maintainAspectRatio:false}});
 // traffic-split donut palette: the dashboard's established category colors
 // (accent, download green, upload amber, red, purple, cyan — others slate)
