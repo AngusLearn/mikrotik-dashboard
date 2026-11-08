@@ -113,6 +113,18 @@ tr.dev.sel{background:#16202b}
 .tdot{pointer-events:none}
 .tdot.dl{fill:var(--dl);filter:drop-shadow(0 0 3px #3fb95088)}
 .tdot.ul{fill:var(--ul);filter:drop-shadow(0 0 3px #d2992288)}
+/* traffic-split donut: segments draw in from 12 o'clock, legend rows slide in */
+.donutwrap{display:flex;align-items:center;gap:26px;flex-wrap:wrap;min-height:206px;padding:4px 6px}
+.donut{width:180px;height:180px;flex:none}
+text.dtot{fill:var(--fg);font-size:17px;font-weight:650}
+text.dsub{fill:var(--muted);font-size:8.5px;letter-spacing:.06em}
+.dlegend{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;font-size:12.5px;flex:1;min-width:190px;max-width:340px}
+.dlegend li{display:flex;align-items:center;gap:9px;opacity:0;transform:translateX(18px)}
+.dlegend li.in{opacity:1;transform:none;transition:opacity .45s ease,transform .45s ease}
+.dlegend .sw{width:10px;height:10px;border-radius:3px;flex:none}
+.dlegend .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dlegend .rate{color:var(--muted);font-size:11px;white-space:nowrap}
+.dlegend .pct{margin-left:auto;color:var(--fg);font-size:11px;font-variant-numeric:tabular-nums;padding-left:10px}
 .tnode.tdev{cursor:pointer} .tnode.tdev:hover rect{stroke:var(--accent)}
 @keyframes tfade{from{opacity:0}} .tnode{animation:tfade .45s ease}
 /* live flows list inside the docked device panel */
@@ -189,7 +201,7 @@ svg text{user-select:none}
   </div>
   <div class="panel">
     <h2>Traffic split · last hour</h2>
-    <div style="position:relative;height:230px"><canvas id="pieChart"></canvas></div>
+    <div class="donutwrap" id="donut"></div>
   </div>
 </div>
 
@@ -348,9 +360,9 @@ const wanChart=new Chart($('#wanChart'),{type:'line',data:{datasets:[
    ticks:{maxTicksLimit:8}},
    y:{beginAtZero:true,ticks:{callback:v=>fmtBps(v)}}},
   plugins:{legend:{labels:{boxWidth:12}}},parsing:false,maintainAspectRatio:false}});
-const pieChart=new Chart($('#pieChart'),{type:'doughnut',data:{labels:['You','others…'],datasets:[
- {data:[1,1],backgroundColor:['#4cc2ff','#31445c','#3fb950','#d29922','#f85149','#a371f7','#39c5cf'],borderWidth:0}]},
- options:{plugins:{legend:{position:'right',labels:{boxWidth:10,font:{size:11}}}},cutout:'62%',maintainAspectRatio:false}});
+// traffic-split donut palette: the dashboard's established category colors
+// (accent, download green, upload amber, red, purple, cyan — others slate)
+const DSPLIT=['#4cc2ff','#3fb950','#d29922','#f85149','#a371f7','#39c5cf'];
 let dlgChart=null, rangeMin=15, sortKey='now', devices=[], totalsCache={};
 
 // ---- WAN history (user-selected range; total or netflow-style per-device stack)
@@ -936,16 +948,62 @@ function openFlows(ip){
 $('#f-all').onclick=()=>{_flTab='all';$('#f-all').classList.add('active');$('#f-in').classList.remove('active');renderFlows()};
 $('#f-in').onclick=()=>{_flTab='in';$('#f-in').classList.add('active');$('#f-all').classList.remove('active');renderFlows()};
 
-// ---- pie: top devices by cumulative traffic
+// ---- traffic split donut: top devices by cumulative traffic.
+// Each segment is a full circle stroked via stroke-dasharray: it GROWS
+// clockwise from its start point (previous segment's end), first segment
+// starting at 12 o'clock (group rotate -90), with a hairline gap between
+// neighbours. Entry animation = dasharray 0->final with staggered delays,
+// legend rows slide in from the right on the same schedule — a hand-rolled
+// equivalent of GSAP's DrawSVG sequencing, no paid plugin needed.
+let _donutSig='';
+function renderDonut(segs){
+ const wrap=$('#donut');if(!wrap)return;
+ const total=segs.reduce((a,s)=>a+s.v,0)||1;
+ const sig=segs.map(s=>s.n).join('|');
+ const fresh=sig!==_donutSig; _donutSig=sig;
+ const G=segs.length>1?0.9:0;                 // gap between segments, circle-%
+ let start=0,arcs='',leg='';
+ segs.forEach((s,i)=>{
+  const pct=s.v/total*100;
+  const len=Math.max(0.35,pct-G);             // min visible arc
+  const off=-(start+G/2);
+  arcs+=`<circle class="dseg" cx="80" cy="80" r="60" pathLength="100" fill="none"
+    stroke="${s.c}" stroke-width="18" stroke-dashoffset="${off.toFixed(2)}"
+    stroke-dasharray="${fresh?'0 100':len.toFixed(2)+' 100'}"
+    data-final="${len.toFixed(2)} 100"><title>${esc(s.n)} · ${(pct).toFixed(1)}%</title></circle>`;
+  start+=pct;
+  leg+=`<li style="${fresh?`transition-delay:${(i*0.16).toFixed(2)}s`:''}">
+    <span class="sw" style="background:${s.c}"></span>
+    <span class="nm">${esc(s.n)}</span>
+    <span class="rate">${fmtB(s.v)}</span>
+    <span class="pct">${pct.toFixed(1)}%</span></li>`;});
+ wrap.innerHTML=`<svg class="donut" viewBox="0 0 160 160" role="img" aria-label="traffic split, last hour">
+   <circle cx="80" cy="80" r="60" fill="none" stroke="var(--panel2)" stroke-width="18"/>
+   <g transform="rotate(-90 80 80)">${arcs}</g>
+   <text class="dtot" x="80" y="78" text-anchor="middle">${fmtB(total)}</text>
+   <text class="dsub" x="80" y="94" text-anchor="middle">TOTAL · LAST HOUR</text>
+  </svg><ul class="dlegend">${leg}</ul>`;
+ // second frame: start from the current (empty) dasharray so the
+ // transition actually runs; stagger each segment's growth
+ requestAnimationFrame(()=>requestAnimationFrame(()=>{
+  wrap.querySelectorAll('circle.dseg').forEach((c,i)=>{
+   c.style.transition=fresh
+    ? `stroke-dasharray .8s cubic-bezier(.3,.7,.3,1) ${(i*0.16).toFixed(2)}s`
+    : 'stroke-dasharray .6s ease, stroke-dashoffset .6s ease';
+   c.setAttribute('stroke-dasharray',c.dataset.final);});
+  wrap.querySelectorAll('.dlegend li').forEach(li=>li.classList.add('in'));}));
+}
 async function loadPie(){
  const r=await fetch('/api/state');const s=await r.json();
- const ds=(s.devices||[]).map(d=>({n:d.hostname||d.vendor||d.ip,v:(d.rx_total||0)+(d.tx_total||0)}))
-  .sort((a,b)=>b.v-a.v).slice(0,7);
- if(!ds.some(x=>x.v))ds.length=0,ds.push({n:'no traffic yet',v:1});
- const rest=(s.devices||[]).reduce((a,d)=>a+(d.rx_total||0)+(d.tx_total||0),0)-ds.reduce((a,b)=>a+b.v,0);
- pieChart.data.labels=ds.map(x=>x.n).concat(rest>1?['others']:[]);
- pieChart.data.datasets[0].data=ds.map(x=>x.v).concat(rest>1?[rest]:[]);
- pieChart.update('none');
+ const devs=(s.devices||[]).map(d=>({n:d.hostname||d.vendor||d.ip,
+   v:(d.rx_total||0)+(d.tx_total||0)})).sort((a,b)=>b.v-a.v);
+ const all=devs.reduce((a,d)=>a+d.v,0);
+ const top=devs.filter(d=>d.v>0).slice(0,6);
+ const segs=top.map((d,i)=>({...d,c:DSPLIT[i%DSPLIT.length]}));
+ const rest=all-top.reduce((a,b)=>a+b.v,0);
+ if(rest>1)segs.push({n:'others',v:rest,c:'#31445c'});
+ if(!segs.length)segs.push({n:'no traffic yet',v:1,c:'#31445c'});
+ renderDonut(segs);
 }
 
 // ---- router profiles dialog

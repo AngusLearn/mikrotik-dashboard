@@ -1,6 +1,21 @@
 # Changelog
 
 ## 2026-11-05
+12. **Traffic split: animated donut segments** — the Chart.js doughnut is
+    replaced by a hand-built SVG donut with the requested sequential
+    draw-in: segments start at 12 o'clock (group `rotate(-90)`), the first
+    arc grows clockwise via `stroke-dasharray` 0→final, the next begins
+    exactly where the previous ended, hairline gaps between segments,
+    each segment a distinct category color from the dashboard's existing
+    palette (accent/green/amber/red/purple/cyan, slate for `others`).
+    Center shows the total bytes + label; legend rows slide in from the
+    right staggered on the same schedule. This reproduces the GSAP
+    DrawSVG sequencing (which is a paid plugin) with plain CSS transitions
+    — no new dependency. Re-renders every 60 s: unchanged segment set
+    re-sizes arcs smoothly without re-playing the entry; a new set replays
+    it. node --check OK.
+
+## 2026-11-05
 11. **Login page: particle-network backdrop** — constellation effect behind
     the login card (canvas 2D + rAF): 26–70 dots (count scales with viewport
     area) drift slowly and bounce off the edges; pairs within a viewport-
