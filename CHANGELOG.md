@@ -1,6 +1,23 @@
 # Changelog
 
 ## 2026-11-08
+18. **Per-device traffic: colors and legend order are per DEVICE now** — the
+    top-N palette and legend positions were assigned by current traffic RANK,
+    recomputed every 3 s refresh. When two busy devices (MS-S1-MAX-CachyOS and
+    Tran-Storage, both ~10 Mbps) traded the #1/#2 spots, their swatches, line
+    colors and legend entries swapped between polls — so "disable the blue
+    one" hit whatever device had just moved under the cursor (screenshots:
+    legend headed by MS-S1 in one shot, Tran-Storage in the next; disabling
+    blue appeared to make the 10 Mbps green line vanish too). Each device now
+    keeps ONE color for the session (assigned at first sight) and the top-N
+    order is retained while the same devices are present, so the stack
+    geometry and legend never churn between polls; the ranking re-applies
+    only when the device set changes. Verified headless with a stub that
+    swaps the two leaders on alternating polls: dataset order and every
+    line's color identical across the swap, a legend click hides exactly the
+    clicked device and the surviving 10 Mbps line keeps the axis; the #16
+    disable suite (12) and #17 tooltip suite (6) still pass. node --check OK.
+
 17. **Per-device traffic: no stale tooltip after a legend click** — a tooltip
     left open while you clicked a legend entry stayed on screen and kept
     listing the dataset you had just hidden (screenshot: struck-through

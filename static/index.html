@@ -386,6 +386,20 @@ let dlgChart=null, rangeMin=15, sortKey='now', devices=[], totalsCache={};
 // ---- WAN history (user-selected range; total or netflow-style per-device stack)
 let wanMode='total';
 const PALETTE=['#4cc2ff','#3fb950','#d29922','#f85149','#a371f7','#39c5cf','#e69f00','#cc79a7','#7ee2a0','#f778ba'];
+// Color + order are PER DEVICE, not per rank. Assigning PALETTE by rank made
+// devices change swatch/line color whenever two traffic totals swapped ranks
+// between 3 s refreshes, and made legend entries move under the cursor (a
+// click on "blue" could hit whichever device had just moved there — the
+// "disabled blue, green vanished too" bug).
+const devColorMap=new Map(); let _palNext=0;
+const devColor=k=>{let c=devColorMap.get(k);
+  if(!c){c=PALETTE[_palNext++%PALETTE.length]; devColorMap.set(k,c);} return c;};
+const _topOrder={};   // wanMode -> last top-N key list
+function stableTop(mode,keys){   // keep the previous arrangement while the
+  const prev=_topOrder[mode];    // same devices are present, so the stack
+  _topOrder[mode]=(prev && prev.length===keys.length
+    && keys.every(k=>prev.includes(k))) ? prev : keys;
+  return _topOrder[mode];}
 async function loadWan(){
  const buckets={15:5,60:30,360:120,1440:300};
  $('#wan-title').textContent=wanMode==='total'?'WAN throughput':'Per-device traffic';
@@ -405,11 +419,11 @@ async function loadWan(){
   const label={};devs.forEach(x=>{label[x.mac]=x.hostname||x.vendor||x.ip||x.mac.slice(0,8);});
   const which=wanMode==='dl'?1:2;
   const tot={};d.series.forEach(s=>{tot[s.key]=s.points.reduce((a,p)=>a+p[which],0)});
-  const top=Object.keys(tot).filter(k=>tot[k]>0).sort((a,b)=>tot[b]-tot[a]).slice(0,9);
-  const ds=top.map((k,i)=>({
+  const top=stableTop(wanMode,Object.keys(tot).filter(k=>tot[k]>0).sort((a,b)=>tot[b]-tot[a]).slice(0,9));
+  const ds=top.map((k)=>({
     label:label[k]||k.slice(0,8),
     data:d.series.find(s=>s.key===k).points.map(p=>({x:p[0]*1000,y:p[which]})),
-    borderColor:PALETTE[i%PALETTE.length],backgroundColor:PALETTE[i%PALETTE.length]+'30',
+    borderColor:devColor(k),backgroundColor:devColor(k)+'30',
     fill:'origin',borderWidth:1,pointRadius:0,stepped:'middle'}));
   const ot={};d.series.forEach(s=>{if(!top.includes(s.key))s.points.forEach(p=>{ot[p[0]]=(ot[p[0]]||0)+p[which]})});
   if(Object.keys(ot).length)ds.push({label:'others',
