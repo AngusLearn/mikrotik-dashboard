@@ -365,8 +365,12 @@ const wanChart=new Chart($('#wanChart'),{type:'line',data:{datasets:[
    onClick:(e,item,legend)=>{   // Chart.js default toggle (its show/hide path
     Chart.defaults.plugins.legend.onClick(e,item,legend);   // is battle-tested),
     const ch=legend.chart,lbl=ch.data.datasets[item.datasetIndex].label;
-    const s=_wanHidden.get(wanMode)||new Set();        // then just remember it
-    if(!ch.getDataVisibility(item.datasetIndex))s.add(lbl);else s.delete(lbl);
+    const s=_wanHidden.get(wanMode)||new Set();        // then just remember it.
+    // isDatasetVisible reads meta.hidden — the SAME store chart.hide()/show()
+    // (the default toggle) writes. getDataVisibility reads _hiddenIndices,
+    // which the show/hide path never touches, so it always returned true and
+    // disables were never recorded (hidden lines reappeared on next refresh).
+    if(!ch.isDatasetVisible(item.datasetIndex))s.add(lbl);else s.delete(lbl);
     _wanHidden.set(wanMode,s);}},
    tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${fmtBps(c.parsed.y)}`}}},
   parsing:false,maintainAspectRatio:false}});

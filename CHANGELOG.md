@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-08
+16. **Per-device traffic: disables finally stick** — #15's legend handler
+    delegated the toggle to Chart.js but still *recorded* the state with
+    `chart.getDataVisibility()`, which reads the `_hiddenIndices` map that
+    `show()/hide()` never touches — so it always answered "visible" and a
+    disable was recorded as an enable. The hidden-label memory stayed
+    empty and every 3 s refresh re-showed the line you had just turned off
+    (the exact symptom from #14's report). The handler now reads
+    `chart.isDatasetVisible()`, the same `meta.hidden` store the default
+    toggle writes. Verified in headless Chromium with real mouse clicks on
+    a stubbed-API copy: hide a device, wait through two 3 s auto-refreshes
+    — line stays hidden and struck through; re-enable survives a refresh;
+    the memory stays mode-keyed (hiding in ↓ doesn't affect total); zero
+    pageerrors. The same checks fail against the previous commit.
+
 ## 2026-11-05
 15. **Chart fixes: re-enable toggle + human-readable tooltips** — (a) the
     hand-rolled legend onClick from #14 toggled dataset visibility but
