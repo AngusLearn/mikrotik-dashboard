@@ -108,6 +108,8 @@ tr.dev.sel{background:#16202b}
 .dld{fill:#3fb950} .uld{fill:#d29922}
 .trate{font-size:10px;fill:#9fb3c8;font-weight:400}
 @keyframes dash{to{stroke-dashoffset:-28}}
+/* packet dots shuttling along a connector (see tickDots) */
+.tdot{fill:var(--accent);filter:drop-shadow(0 0 3px #4cc2ff88);pointer-events:none}
 .tnode.tdev{cursor:pointer} .tnode.tdev:hover rect{stroke:var(--accent)}
 @keyframes tfade{from{opacity:0}} .tnode{animation:tfade .45s ease}
 /* live flows list inside the docked device panel */
@@ -494,6 +496,44 @@ function fitDev(g){
  if(r&&w>+r.getAttribute('width')){r.setAttribute('width',w);
   const c=g.querySelector('[data-dot]');if(c)c.setAttribute('cx',w-10)}
  return w}
+// ---- packet dots: a small accent dot shuttles back and forth along every
+// FLOWING connector, phase-staggered per edge so the map never pulses in
+// lockstep. Dots read each path's live `d` (nodes drift as devices
+// re-center), so they keep following the curve while the layout animates.
+// animateMotion/offset-path can't track a mutating d attribute reliably in
+// all engines, so one rAF loop evaluates the cubic bezier manually.
+let _tdots={},_dotPhase={},_dotRAF=null,_dotI=0;
+const _bez=(p,t)=>{const u=1-t,a=u*u*u,b=3*u*u*t,c=3*u*t*t,d=t*t*t;
+ return [a*p[0]+b*p[2]+c*p[4]+d*p[6], a*p[1]+b*p[3]+c*p[5]+d*p[7]];};
+function edgePts(el){ // parse [x1,y1,cx1,cy1,cx2,cy2,x2,y2] from our M...C d
+ const m=(el.getAttribute('d')||'').match(/-?[\d.]+/g);
+ return m&&m.length>=8?m.slice(0,8).map(Number):null;}
+function tickDots(now){
+ _dotRAF=requestAnimationFrame(tickDots);
+ const stop=_noMotion.matches;
+ for(const k in _tdots){const el=_te[k],dot=_tdots[k];
+  if(!el||!dot||!dot.isConnected)continue;
+  const dur=parseFloat(el.style.animationDuration)||1.5;
+  if(stop||!el.classList.contains('flow')){dot.style.opacity='0';continue}
+  const p=edgePts(el);if(!p)continue;
+  dot.style.opacity='';
+  let t=(now/1000/(dur*2.2)+_dotPhase[k])%2;   // round trip: out and back
+  if(t>1)t=2-t;
+  const[x,y]=_bez(p,t);
+  dot.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)})`);}
+}
+function makeDots(){
+ const svg=$('#topo').firstElementChild;if(!svg)return;
+ _tdots={};
+ for(const k in _te){
+  const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  c.setAttribute('r',k==='wan'?3:2.4);c.setAttribute('class','tdot');
+  c.style.opacity='0';svg.appendChild(c);
+  _tdots[k]=c;_dotPhase[k]=(++_dotI*0.6180339887)%2;}   // golden-ratio stagger
+ if(!_dotRAF)_dotRAF=requestAnimationFrame(tickDots);
+}
+function killDots(){ if(_dotRAF){cancelAnimationFrame(_dotRAF);_dotRAF=null} _tdots={}; }
+
 function buildTopo(s){
  const L=topoLayout(s),t=s.topo,X=L.X;
  let e='',nodes='';
@@ -534,6 +574,7 @@ function buildTopo(s){
  _tm={};$('#topo').querySelectorAll('.tdev').forEach(g=>_tm[g.dataset.mac]=
   {dl:g.querySelector('[data-k="dl"]'),ul:g.querySelector('[data-k="ul"]'),dot:g.querySelector('[data-dot]'),g});
  _te={};$('#topo').querySelectorAll('.tedge').forEach(p=>_te[p.dataset.edge]=p);
+ makeDots();
  _tv={};$('#topo').querySelectorAll('[data-via]').forEach(g=>_tv[g.dataset.via]=g);
  _tnl=[];$('#topo').querySelectorAll('[data-netlab]').forEach(g=>_tnl.push(
   {label:g.dataset.netlab,dl:g.querySelector('[data-k="ndl"]'),ul:g.querySelector('[data-k="nul"]')}));
@@ -609,7 +650,7 @@ function renderTopo(s){
  const t=s.topo;
  if(!t||!t.nets||!t.nets.length||!t.nets.some(n=>n.groups.some(g=>g.devices.length))){
   _topoSig='';cancelAnimationFrame(_tAnim);_tS=null;_tY=null;
-  $('#topo').innerHTML='';_tm={};_te={};_tv={};_tnl=[];_wl=null;return}
+  $('#topo').innerHTML='';_tm={};_te={};_tv={};_tnl=[];_wl=null;killDots();return}
  const spd={};(s.devices||[]).forEach(d=>spd[d.mac]=d);
  applyMapSort(t);   // honour the Speed/IP toggle before layout/rebuild
  // STRUCTURE only (device set / names / ports), deliberately order-insensitive:

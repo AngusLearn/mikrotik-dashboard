@@ -1,6 +1,21 @@
 # Changelog
 
 ## 2026-11-05
+9. **Flowing connectors: packet dots** — every FLOWING connector now also
+   carries a small accent-colored dot that shuttles back and forth along
+   its curve (round trip), expressing live bidirectional traffic on top of
+   the marching dashes. One rAF loop evaluates each path's cubic bezier
+   from its live `d` (dots keep tracking while nodes re-center); dot speed
+   follows the same bandwidth→duration curve as the dash animation, and
+   per-edge phases use a golden-ratio stagger so nothing pulses in
+   lockstep. Colors come from the existing theme (`--accent` + glow), no
+   new palette. Dots never appear on quiet edges (<1.5 Kbps threshold
+   unchanged) and are disabled entirely under `prefers-reduced-motion`.
+   animateMotion/offset-path were skipped deliberately: neither tracks a
+   mutating `d` attribute reliably across engines. node --check OK;
+   bezier math and `d`-parsing exercised in node.
+
+## 2026-11-05
 8. **Dark scrollbars** — the flow panel / map / page scrollbars rendered in
    the OS light theme because no page declared `color-scheme: dark`; the
    browser kept native light widgets over a dark page. All three pages
