@@ -1,6 +1,18 @@
 # Changelog
 
 ## 2026-11-05
+10. **Direction-coded packet dots** — the round-tripping accent dot became
+    TWO dots per connector: a green one riding hub->device (download) and
+    an amber one riding device->hub (upload), matching the map's existing
+    ↓green/↑amber chip convention. Each direction appears only when it
+    actually carries traffic (same 1.5 Kbps floor) and moves at its own
+    bandwidth-scaled speed — a device receiving 90 Mbps while idling
+    upload shows a fast green dot and NO amber one. Per-edge rates flow
+    through setE(k, sum, dl, ul): devices per-direction from rx/tx, port
+    and net edges by summing member directions, WAN from wan rx/tx.
+    Golden-ratio phase stagger now per direction. node --check OK.
+
+## 2026-11-05
 9. **Flowing connectors: packet dots** — every FLOWING connector now also
    carries a small accent-colored dot that shuttles back and forth along
    its curve (round trip), expressing live bidirectional traffic on top of

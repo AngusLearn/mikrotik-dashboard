@@ -108,8 +108,11 @@ tr.dev.sel{background:#16202b}
 .dld{fill:#3fb950} .uld{fill:#d29922}
 .trate{font-size:10px;fill:#9fb3c8;font-weight:400}
 @keyframes dash{to{stroke-dashoffset:-28}}
-/* packet dots shuttling along a connector (see tickDots) */
-.tdot{fill:var(--accent);filter:drop-shadow(0 0 3px #4cc2ff88);pointer-events:none}
+/* direction-coded packet dots (see tickDots): green rides hub->device
+   (download), amber rides device->hub (upload) — same ↓/↑ colors as chips */
+.tdot{pointer-events:none}
+.tdot.dl{fill:var(--dl);filter:drop-shadow(0 0 3px #3fb95088)}
+.tdot.ul{fill:var(--ul);filter:drop-shadow(0 0 3px #d2992288)}
 .tnode.tdev{cursor:pointer} .tnode.tdev:hover rect{stroke:var(--accent)}
 @keyframes tfade{from{opacity:0}} .tnode{animation:tfade .45s ease}
 /* live flows list inside the docked device panel */
@@ -496,13 +499,14 @@ function fitDev(g){
  if(r&&w>+r.getAttribute('width')){r.setAttribute('width',w);
   const c=g.querySelector('[data-dot]');if(c)c.setAttribute('cx',w-10)}
  return w}
-// ---- packet dots: a small accent dot shuttles back and forth along every
-// FLOWING connector, phase-staggered per edge so the map never pulses in
-// lockstep. Dots read each path's live `d` (nodes drift as devices
-// re-center), so they keep following the curve while the layout animates.
-// animateMotion/offset-path can't track a mutating d attribute reliably in
-// all engines, so one rAF loop evaluates the cubic bezier manually.
-let _tdots={},_dotPhase={},_dotRAF=null,_dotI=0;
+// ---- packet dots: two directional dots per connector. Green rides the
+// path forward (router/hub -> device = download), amber rides it backward
+// (device -> hub = upload); each only appears when ITS direction carries
+// traffic, and its speed comes from that direction's bandwidth alone.
+// One rAF loop evaluates each path's cubic bezier from its live `d`, so
+// dots keep tracking the curve while nodes re-center during layout tweens
+// (animateMotion/offset-path can't track a mutating d reliably).
+let _tdots={},_dotPhase={},_dotRAF=null,_dotI=0,_erate={};
 const _bez=(p,t)=>{const u=1-t,a=u*u*u,b=3*u*u*t,c=3*u*t*t,d=t*t*t;
  return [a*p[0]+b*p[2]+c*p[4]+d*p[6], a*p[1]+b*p[3]+c*p[5]+d*p[7]];};
 function edgePts(el){ // parse [x1,y1,cx1,cy1,cx2,cy2,x2,y2] from our M...C d
@@ -511,25 +515,28 @@ function edgePts(el){ // parse [x1,y1,cx1,cy1,cx2,cy2,x2,y2] from our M...C d
 function tickDots(now){
  _dotRAF=requestAnimationFrame(tickDots);
  const stop=_noMotion.matches;
- for(const k in _tdots){const el=_te[k],dot=_tdots[k];
-  if(!el||!dot||!dot.isConnected)continue;
-  const dur=parseFloat(el.style.animationDuration)||1.5;
-  if(stop||!el.classList.contains('flow')){dot.style.opacity='0';continue}
-  const p=edgePts(el);if(!p)continue;
-  dot.style.opacity='';
-  let t=(now/1000/(dur*2.2)+_dotPhase[k])%2;   // round trip: out and back
-  if(t>1)t=2-t;
-  const[x,y]=_bez(p,t);
-  dot.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)})`);}
+ for(const k in _tdots){const el=_te[k],dots=_tdots[k];
+  if(!el||!dots||!dots.dl.isConnected)continue;
+  const e=_erate[k]||{},p=stop?null:edgePts(el);
+  const show=(c,dur,rev)=>{
+   if(!p||!dur){c.style.opacity='0';return}
+   c.style.opacity='';
+   let t=(now/(dur*1100)+_dotPhase[k+(rev?'U':'D')])%1;
+   if(rev)t=1-t;
+   const[x,y]=_bez(p,t);
+   c.setAttribute('transform',`translate(${x.toFixed(1)},${y.toFixed(1)})`);};
+  show(dots.dl,e.durD,false);show(dots.ul,e.durU,true);}
 }
 function makeDots(){
  const svg=$('#topo').firstElementChild;if(!svg)return;
  _tdots={};
  for(const k in _te){
-  const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
-  c.setAttribute('r',k==='wan'?3:2.4);c.setAttribute('class','tdot');
-  c.style.opacity='0';svg.appendChild(c);
-  _tdots[k]=c;_dotPhase[k]=(++_dotI*0.6180339887)%2;}   // golden-ratio stagger
+  const mk=cls=>{const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+   c.setAttribute('r',k==='wan'?2.8:2.2);c.setAttribute('class','tdot '+cls);
+   c.style.opacity='0';svg.appendChild(c);return c};
+  _tdots[k]={dl:mk('dl'),ul:mk('ul')};
+  _dotPhase[k+'D']=(++_dotI*0.6180339887)%1;   // golden-ratio stagger
+  _dotPhase[k+'U']=(++_dotI*0.6180339887)%1;}
  if(!_dotRAF)_dotRAF=requestAnimationFrame(tickDots);
 }
 function killDots(){ if(_dotRAF){cancelAnimationFrame(_dotRAF);_dotRAF=null} _tdots={}; }
@@ -623,25 +630,26 @@ function swapTopo(s){
  _tAnim=requestAnimationFrame(step);
 }
 function liveTopo(s,spd){
- const setE=(k,bps)=>{const el=_te[k];if(!el)return;const d=tdur(bps);
-  el.classList.toggle('flow',!!d);if(d)el.style.animationDuration=d+'s'};
- const w=s.wan||{};setE('wan',(w.rx_bps||0)+(w.tx_bps||0));
+ const setE=(k,bps,dl,ul)=>{const el=_te[k];if(!el)return;const d=tdur(bps);
+  el.classList.toggle('flow',!!d);if(d)el.style.animationDuration=d+'s';
+  _erate[k]={durD:tdur(dl||0),durU:tdur(ul||0)}};   // per-direction dot speed
+ const w=s.wan||{};setE('wan',(w.rx_bps||0)+(w.tx_bps||0),w.rx_bps,w.tx_bps);
  if(_wl&&_wl.ul){_wl.dl.textContent='↓'+fmtBps(w.rx_bps||0);_wl.ul.textContent='↑'+fmtBps(w.tx_bps||0)}
  for(const n of _tnl){const v=(s.nets||{})[n.label];if(v&&n.dl){
    n.dl.textContent='↓'+fmtBps(v.rx_bps);n.ul.textContent=' ↑'+fmtBps(v.tx_bps);
-   setE('net:'+n.label,v.rx_bps+v.tx_bps)}}
+   setE('net:'+n.label,v.rx_bps+v.tx_bps,v.rx_bps,v.tx_bps)}}
  // hub -> port edges flow at the summed rate of the devices behind that port
  for(const n of (s.topo&&s.topo.nets)||[])for(const g of n.groups){if(!g.port)continue;
-   let bps=0;for(const d of g.devices){const sp=spd[d.mac];if(sp)bps+=sp.rx_bps+sp.tx_bps}
-   setE('via:port:'+n.label+':'+g.port,bps)}
+   let bps=0,dl=0,ul=0;for(const d of g.devices){const sp=spd[d.mac];if(sp){bps+=sp.rx_bps+sp.tx_bps;dl+=sp.rx_bps;ul+=sp.tx_bps}}
+   setE('via:port:'+n.label+':'+g.port,bps,dl,ul)}
  for(const[mac,d]of Object.entries(spd)){const m=_tm[mac];if(!m||!m.dl)continue;
-  m.dl.textContent=' ↓'+fmtBps(d.rx_bps);m.ul.textContent=' ↑'+fmtBps(d.tx_bps);
-  // rates can lengthen the row after the build-time fit (0 bps -> 940 Mbps)
-  const rw=fitDev(m.g);
-  if(rw>_topoMaxW){const svg=$('#topo').firstElementChild;
-   if(svg)svg.setAttribute('width',svg.width.baseVal.value+(rw-_topoMaxW));_topoMaxW=rw}
-  if(m.dot)m.dot.setAttribute('fill',d.blocked?'#f85149':((d.rx_bps+d.tx_bps)>8000?'#3fb950':'#30475e'));
-  setE('dev:'+mac,d.rx_bps+d.tx_bps)}
+ m.dl.textContent=' ↓'+fmtBps(d.rx_bps);m.ul.textContent=' ↑'+fmtBps(d.tx_bps);
+ // rates can lengthen the row after the build-time fit (0 bps -> 940 Mbps)
+ const rw=fitDev(m.g);
+ if(rw>_topoMaxW){const svg=$('#topo').firstElementChild;
+  if(svg)svg.setAttribute('width',svg.width.baseVal.value+(rw-_topoMaxW));_topoMaxW=rw}
+ if(m.dot)m.dot.setAttribute('fill',d.blocked?'#f85149':((d.rx_bps+d.tx_bps)>8000?'#3fb950':'#30475e'));
+ setE('dev:'+mac,d.rx_bps+d.tx_bps,d.rx_bps,d.tx_bps)}
 }
 function renderTopo(s){
  if(mapMode==='ports'&&s.topo_ports&&s.topo_ports.nets&&s.topo_ports.nets.length)
