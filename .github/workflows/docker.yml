@@ -3,6 +3,7 @@ name: build-and-push
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch: {}
 
 jobs:
@@ -29,6 +30,7 @@ jobs:
           tags: |
             anguslearn/mikrotik-dashboard:latest
             anguslearn/mikrotik-dashboard:${{ github.sha }}
+            anguslearn/mikrotik-dashboard:${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
