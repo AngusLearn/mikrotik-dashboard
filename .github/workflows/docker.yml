@@ -47,3 +47,19 @@ jobs:
           provider: dockerhub
           short_description: "Self-hosted live traffic dashboard for MikroTik RouterOS — per-device charts, network map"
           readme_file: DOCKER_HUB.md
+
+      - name: Publish GitHub Release
+        # Tag pushes only; uses the workflow's own token, no PAT permission needed.
+        if: startsWith(github.ref, 'refs/tags/v')
+        permissions:
+          contents: read
+          releases: write
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f .github/release-notes.md ]; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file .github/release-notes.md \
+              || gh release edit "$GITHUB_REF_NAME" --notes-file .github/release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes
+          fi
