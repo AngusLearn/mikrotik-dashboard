@@ -1,6 +1,7 @@
 # WAN-history separation test: switches between the two REAL router profiles
 # on a temp DASH_BASE instance and proves each profile's charts only ever see
-# its OWN samples (Batch #34). No browser needed — plain urllib + sqlite.
+# its OWN samples — and, since concurrent per-profile samplers (Batch #48),
+# that BOTH profiles keep collecting while only one is displayed.
 # run: <any python3 with librouteros in path or repo venv> tests/test_history_split.py
 import json, os, sqlite3, subprocess, sys, tempfile, time, urllib.request
 from pathlib import Path
@@ -89,8 +90,8 @@ try:
     time.sleep(9)
     n_b, n_a2 = count(tmp, DB_B), count(tmp, DB_A)
     check("profile B accumulates in its own file", n_b >= 2, f"rows={n_b}")
-    check("A's file frozen while B is active (charts cannot mix)", n_a2 == n_a,
-          f"{n_a} -> {n_a2}")
+    check("A keeps collecting while B is displayed (concurrent samplers)",
+          n_a2 > n_a, f"{n_a} -> {n_a2}")
     time.sleep(2)
     with op.open(urllib.request.Request(
             URL + "api/history?range_min=1", method="GET"), timeout=15) as r:
@@ -106,7 +107,8 @@ try:
     time.sleep(9)
     n_a3, n_b2 = count(tmp, DB_A), count(tmp, DB_B)
     check("switching back resumes A's own history", n_a3 > n_a2, f"{n_a2} -> {n_a3}")
-    check("B's file frozen while A is active", n_b2 == n_b, f"{n_b} -> {n_b2}")
+    check("B keeps collecting while A is displayed (concurrent samplers)",
+          n_b2 > n_b, f"{n_b} -> {n_b2}")
 
     # the two datasets are genuinely different routers (not the same stream twice)
     with sqlite3.connect(DB_A) as c:

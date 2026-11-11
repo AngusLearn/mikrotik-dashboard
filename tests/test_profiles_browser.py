@@ -1,7 +1,8 @@
 # End-to-end router-profiles test on a temp DASH_BASE instance (reads the REAL
 # routers via a copy of config.json; never touches live :8899).
 # Creates a profile for a SECOND router, switches between them with one click
-# and checks the display state is never stale across the switch.
+# and checks both samplers run concurrently: the switch is instant and shows
+# the picked router already live (Batch #34, concurrent since #48).
 # run: <playwright-python> tests/test_profiles_browser.py
 import os, subprocess, sys, tempfile, time, json, urllib.request, urllib.error
 from pathlib import Path
@@ -109,14 +110,17 @@ try:
         check("both routers now saved as profiles",
               sorted(x["name"] for x in prof["profiles"]) == sorted([HOST_A, HOST_B]),
               json.dumps(prof)[:160])
+        check("inactive profile keeps collecting (every profile has its own sampler)",
+              all(x.get("connected") for x in prof["profiles"]), json.dumps(prof)[:160])
         r = pg.request.fetch(URL + "/api/profiles/use", method="POST",
                              data=json.dumps({"name": HOST_A}),
                              headers={"content-type": "application/json"})
         check("switch API ok", r.status == 200)
         st = pg.evaluate("() => fetch('/api/state').then(r => r.json())")
-        check("switch instantly clears the previous router's view",
-              not st.get("devices") and not st.get("system"),
-              f"devices={len(st.get('devices') or [])}")
+        check("switch is instant: the other router was already being polled",
+              st.get("connected")
+              and (st.get("system") or {}).get("board", "").startswith(BOARD_A[:5]),
+              f"board={(st.get('system') or {}).get('board')!r}")
         try:
             pg.wait_for_function(
                 "() => window._lastState && window._lastState.connected && "

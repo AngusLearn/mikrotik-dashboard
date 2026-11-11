@@ -1050,10 +1050,12 @@ async function loadPie(){
 }
 
 // ---- router profiles dialog
-// Two clearly separate zones: the SAVED list (per-row Switch / Delete, the
-// active one marked "connected") and the ADD / UPDATE form below the divider.
-// Passwords are never fetched to the browser — Switch reconnects with the
-// profile's stored password server-side.
+// Two clearly separate zones: the SAVED list (per-row Switch / Delete) and the
+// ADD / UPDATE form below the divider. Every saved profile is polled
+// continuously in the background (each row shows its own collecting state),
+// so Switch is only a display change — instant, no reconnect, no gap.
+// Passwords are never fetched to the browser — Switch uses the profile's
+// stored password server-side.
 window._prof={profiles:[],active:''};
 const escP=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 async function loadProf(){try{const p=await(await fetch('/api/profiles')).json();
@@ -1062,7 +1064,10 @@ function fillProf(){const p=window._prof,list=p.profiles||[];
  $('#prof-list').innerHTML=list.length?list.map(x=>
   `<div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:8px;padding:6px 10px">`+
   `<div style="flex:1"><b>${escP(x.host)}</b>`+
-  `<div class="sub">${escP(x.user)}${x.name===p.active?' · <b style="color:#3fb950">connected</b>':''}</div></div>`+
+  `<div class="sub">${escP(x.user)}`+
+  (x.name===p.active?' · <b>shown</b>':'')+
+  (x.connected?' · <b style="color:#3fb950">collecting</b>':' · <span style="color:#d29922">offline</span>')+
+  `</div></div>`+
   (x.name===p.active?'':`<button class="btn p-use" data-name="${escP(x.name)}">Switch</button>`)+
   `<button class="btn p-del" data-name="${escP(x.name)}" style="color:#ffb4ab;border-color:#6e2c2c">Delete</button></div>`
   ).join('')
@@ -1070,7 +1075,7 @@ function fillProf(){const p=window._prof,list=p.profiles||[];
  $('#prof-list').querySelectorAll('.p-use').forEach(el=>el.onclick=async()=>{
    await fetch('/api/profiles/use',{method:'POST',headers:{'content-type':'application/json'},
     body:JSON.stringify({name:el.dataset.name})});
-   $('#authdlg').close();setTimeout(poll,600)});
+   $('#authdlg').close();poll()});    // data already live — refresh right away
  $('#prof-list').querySelectorAll('.p-del').forEach(el=>el.onclick=async()=>{
    const n=el.dataset.name,act=window._prof.active===n;
    if(!confirm(act

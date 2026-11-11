@@ -884,3 +884,11 @@
 - Client machines: browser only — never install anything on the viewing machine.
 - Every change must be recorded in this file and verified by an independent
   OpenCode run before being reported as done.
+
+## 2026-11-11 — Batch #48: concurrent per-profile samplers (switch = display-only)
+- one RouterMonitor thread per saved profile (MonitorSupervisor reconciles MONITORS with config.json; endpoints call start/stop directly, loop is the safety net) — every router is polled and historized continuously, the inactive side no longer freezes
+- STATE is now per profile (STATE[name]); /api/state serves the active profile + `monitors` summary; profiles list carries per-profile `connected`
+- profiles/use no longer drops the connection or blanks the display: switching is instant (target already live, full history present); creds change is detected by the sampler itself (reconnect + cache reset)
+- hist_db/hist_path take a profile arg; DNS reverse cache (_dns_rev) keyed per profile so one router's names never decorate another network's peers; api_peers/analytics-conns/control act on the active monitor
+- profiles dialog: rows show collecting/offline per profile, "shown" marks the displayed one; Switch refreshes immediately
+- tests: history-split & profiles browser checks inverted to assert concurrent collection (also: unit suites pass)

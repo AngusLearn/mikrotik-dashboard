@@ -183,22 +183,26 @@ def db() -> sqlite3.Connection:
 # bucketed per router profile so switching routers never mixes two networks'
 # charts. Auth state (sessions, login_fail) deliberately stays global in
 # history.db. An unnamed profile (pre-profiles config) keeps using history.db.
+# Every sampler writes its OWN bucket, so all profiles accumulate continuously
+# regardless of which one the dashboard is currently displaying.
 _hist_ready: set[str] = set()
 
 
-def hist_path() -> Path:
-    try:
-        prof = str(load_config().get("active", "") or "")
-    except Exception:
-        prof = ""
-    if not prof:
+def hist_path(profile: str | None = None) -> Path:
+    """History file for a profile; None = the active one (request handlers)."""
+    if profile is None:
+        try:
+            profile = str(load_config().get("active", "") or "")
+        except Exception:
+            profile = ""
+    if not profile:
         return DB_PATH
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", prof)[:64]
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", profile)[:64]
     return BASE / f"history-{safe}.db"
 
 
-def hist_db() -> sqlite3.Connection:
-    path = hist_path()
+def hist_db(profile: str | None = None) -> sqlite3.Connection:
+    path = hist_path(profile)
     conn = sqlite3.connect(path, timeout=15)
     conn.execute("PRAGMA journal_mode=WAL")
     if str(path) not in _hist_ready:  # caller holds _db_lock; DDL is idempotent
@@ -260,26 +264,39 @@ def db_prune(retention_hours: float) -> None:
 
 
 # --------------------------------------------------------------------------
-# Shared state (written by sampler thread, read by API)
+# Shared state (written by the per-profile sampler threads, read by API)
+# One state dict per profile: every saved router keeps a full live view while
+# the dashboard displays only the active one.
 # --------------------------------------------------------------------------
-STATE = {
-    "connected": False,
-    "last_error": None,
-    "stale": False,
-    "updated": 0.0,
-    "system": {},
-    "wan": {},
-    "devices": [],
-    "totals": {},
-    "nets": {},
-    "topo": {},
-    "topo_ports": {},
-    "config": {},
-    "wifi": [],
-    "health": [],
-    "pools": [],
-}
 _state_lock = threading.Lock()
+STATE: dict[str, dict] = {}   # profile name -> its state dict
+
+
+def new_state(profile: str = "") -> dict:
+    return {
+        "connected": False,
+        "last_error": None,
+        "stale": False,
+        "updated": 0.0,
+        "system": {},
+        "wan": {},
+        "devices": [],
+        "totals": {},
+        "nets": {},
+        "topo": {},
+        "topo_ports": {},
+        "config": {},
+        "wifi": [],
+        "health": [],
+        "pools": [],
+    }
+
+
+def state_for(profile: str) -> dict:
+    """The live view for one profile; created blank so an endpoint can answer
+    (as 'not connected yet') before its sampler's first poll completes."""
+    with _state_lock:
+        return STATE.setdefault(profile, new_state(profile))
 
 
 # --------------------------------------------------------------------------
@@ -483,8 +500,17 @@ def topo_group_devices(devices_out, key):
 
 
 class RouterMonitor(threading.Thread):
-    def __init__(self):
-        super().__init__(daemon=True, name="router-sampler")
+    """One sampler thread per router profile. Owns its API connection, its
+    last-good cache, its live view (STATE[profile]) and its history bucket —
+    so every saved profile keeps collecting while the dashboard shows another
+    one. Switching profiles is a pure display switch, no reconnect."""
+
+    def __init__(self, profile: str = ""):
+        super().__init__(daemon=True,
+                         name=f"router-sampler-{profile or 'default'}")
+        self.profile = profile
+        self.state = state_for(profile)
+        self._creds: dict | None = None  # last seen connection settings
         self.api = None
         self.prev_wan = None  # {iface: (rx_bytes, tx_bytes)}
         self.wan_ifaces = []
@@ -501,27 +527,41 @@ class RouterMonitor(threading.Thread):
         self.poll_degraded = False
 
     # ----- connection -----------------------------------------------------
-    def connect(self):
+    def creds(self, cfg: dict) -> dict | None:
+        """Connection settings for THIS profile; None when the profile was
+        deleted or blanked — the sampler then retires itself."""
+        if self.profile:
+            p = (cfg.get("profiles") or {}).get(self.profile)
+            if not p or not p.get("user"):
+                return None
+            return {k: p.get(k) for k in _PROFILE_KEYS}
+        # unnamed profile (pre-profiles flat config)
+        if not cfg.get("user"):
+            return None
+        return {k: cfg.get(k) for k in _PROFILE_KEYS}
+
+    def connect(self, creds: dict) -> None:
         from librouteros import connect
 
-        cfg = load_config()
-        if not cfg.get("user"):
-            raise RuntimeError("router credentials not configured — open the dashboard and enter them")
         self.api = connect(
-            host=cfg["host"],
-            port=int(cfg["port"]),
-            username=cfg["user"],
-            password=cfg["password"],
+            host=creds["host"],
+            port=int(creds["port"]),
+            username=creds["user"],
+            password=creds["password"],
             timeout=8,
         )
         # force a round trip so bad auth fails here
         if api_fetch_all(self.api, "/system/resource") is None:
             raise RuntimeError("router api round-trip failed")
-        log.info("connected to RouterOS at %s", cfg["host"])
+        log.info("connected to RouterOS at %s (profile %s)",
+                 creds["host"], self.profile or "default")
 
     def ensure(self):
         if self.api is None:
-            self.connect()
+            creds = self._creds or self.creds(load_config())
+            if not creds:
+                raise RuntimeError("router credentials not configured — open the dashboard and enter them")
+            self.connect(creds)
 
     def drop(self):
         try:
@@ -582,19 +622,33 @@ class RouterMonitor(threading.Thread):
         while not self.stop_flag.is_set():
             t0 = time.time()
             cfg = load_config()
+            if self.stop_flag.is_set():
+                break
+            creds = self.creds(cfg)
+            if creds is None:  # profile deleted or blanked -> retire this sampler
+                log.info("sampler for profile %s retiring (no credentials)",
+                         self.profile or "default")
+                break
+            if self._creds is not None and creds != self._creds:
+                # password/host rotated: never reuse the old socket or the
+                # previous target's cached rows
+                log.info("profile %s credentials changed — reconnecting",
+                         self.profile or "default")
+                self.reset()
+            self._creds = creds
             self.poll_degraded = False
             try:
                 self.ensure()
-                self.poll(cfg)
+                self.poll(cfg, creds)
                 self.err_count = 0
                 with _state_lock:
-                    STATE["connected"] = True
-                    STATE["stale"] = self.poll_degraded
-                    STATE["last_error"] = (
+                    self.state["connected"] = True
+                    self.state["stale"] = self.poll_degraded
+                    self.state["last_error"] = (
                         "router busy — showing last known data"
                         if self.poll_degraded else None)
                     if not self.poll_degraded:
-                        STATE["updated"] = time.time()
+                        self.state["updated"] = time.time()
                 if self.poll_degraded:
                     log.warning("degraded poll — forcing fresh connection")
                     self.drop()   # stale-but-real data served, retry on a clean socket
@@ -602,9 +656,10 @@ class RouterMonitor(threading.Thread):
                 self.err_count += 1
                 msg = str(e) or e.__class__.__name__
                 with _state_lock:
-                    STATE["connected"] = False
-                    STATE["last_error"] = msg
-                log.warning("poll failed: %s", msg)
+                    self.state["connected"] = False
+                    self.state["last_error"] = msg
+                log.warning("poll failed (profile %s): %s",
+                            self.profile or "default", msg)
                 self.drop()
                 self.prev_wan = None
                 time.sleep(min(5 * self.err_count, 30))
@@ -612,9 +667,10 @@ class RouterMonitor(threading.Thread):
             sleep_left = cfg["interval_seconds"] - (time.time() - t0)
             if sleep_left > 0:
                 self.stop_flag.wait(sleep_left)
+        self.drop()
 
     # ----- one polling cycle ---------------------------------------------
-    def poll(self, cfg):
+    def poll(self, cfg, creds):
         api = self.api
         now = time.time()
 
@@ -858,10 +914,13 @@ class RouterMonitor(threading.Thread):
         proto_acc: dict = {}  # proto -> [rx_bps, tx_bps, flows] (WAN-bound only)
         port_acc: dict = {}   # "tcp/443" -> [rx_bps, tx_bps, flows]
         flows_n = 0
-        # keep the address->names map fresh here (request threads must not use this API conn)
-        if time.time() - _dns_rev["ts"] > DNS_TTL:
+        # keep the address->names map fresh here (request threads must not use
+        # this API conn); the cache is per profile so one router's DNS names
+        # never decorate another network's peers
+        rev = dns_rev_for(self.profile)
+        if time.time() - rev["ts"] > DNS_TTL:
             try:
-                build_dns_rev(api)
+                build_dns_rev(api, self.profile)
             except Exception as e:
                 log.debug("dns cache invert failed: %s", e)
         for c in self.conns(api):
@@ -1084,7 +1143,7 @@ class RouterMonitor(threading.Thread):
             dev["blocked"] = dev["ip"] in blocked_ips or any(i in blocked_ips for i in dev["ips"])
 
         # attach cumulative totals from db
-        with _db_lock, hist_db() as c:
+        with _db_lock, hist_db(self.profile) as c:
             tots = {r[0]: r for r in c.execute(
                 "SELECT mac, rx_total, tx_total, first_seen FROM devices")}
         for dev in devices_out:
@@ -1114,7 +1173,7 @@ class RouterMonitor(threading.Thread):
             self._acc_ts = now
 
         # ---- persist
-        with _db_lock, hist_db() as c:
+        with _db_lock, hist_db(self.profile) as c:
             c.executemany(
                 "INSERT OR REPLACE INTO samples VALUES (?,?,?,?)",
                 [(now, "", wan_rx_bps, wan_tx_bps)]
@@ -1177,29 +1236,114 @@ class RouterMonitor(threading.Thread):
         }
         topo_ports = dict(topo, nets=topo_ports_nets)
         with _state_lock:
-            STATE["system"] = system
-            STATE["wan"] = {
+            self.state["system"] = system
+            self.state["wan"] = {
                 "ifaces": wan_meta,
                 "ip": wan_ip_local or wan_ip,
                 "gw": wan_ip,
                 "rx_bps": round(wan_rx_bps, 1),
                 "tx_bps": round(wan_tx_bps, 1),
             }
-            STATE["devices"] = devices_out
-            STATE["totals"] = totals
-            STATE["nets"] = netsum
-            STATE["topo"] = topo
-            STATE["topo_ports"] = topo_ports
-            STATE["wifi"] = wifi_out
-            STATE["health"] = health
-            STATE["pools"] = pools
-        STATE["config"] = {
-            "host": cfg["host"],
-            "user": cfg.get("user", ""),
-            "profile": cfg.get("active", ""),
-            "allow_control": bool(cfg.get("allow_control")),
-            "interval": cfg["interval_seconds"],
-        }
+            self.state["devices"] = devices_out
+            self.state["totals"] = totals
+            self.state["nets"] = netsum
+            self.state["topo"] = topo
+            self.state["topo_ports"] = topo_ports
+            self.state["wifi"] = wifi_out
+            self.state["health"] = health
+            self.state["pools"] = pools
+            self.state["config"] = {
+                "host": creds.get("host", ""),
+                "user": creds.get("user", ""),
+                "profile": self.profile,
+                "allow_control": bool(cfg.get("allow_control")),
+                "interval": cfg["interval_seconds"],
+            }
+
+
+# --------------------------------------------------------------------------
+# One sampler per profile — concurrent collection
+# Every saved profile gets its own RouterMonitor, so all routers are polled
+# and historized continuously; switching profiles only moves which live view
+# the dashboard displays. Endpoints act on the ACTIVE profile by default.
+# --------------------------------------------------------------------------
+MONITORS: dict[str, RouterMonitor] = {}
+_mon_lock = threading.Lock()
+
+
+def start_monitor(profile: str) -> None:
+    """Sampler for `profile`, started on demand; idempotent."""
+    with _mon_lock:
+        if profile in MONITORS:
+            return
+        mon = RouterMonitor(profile)
+        MONITORS[profile] = mon
+    mon.start()
+
+
+def stop_monitor(profile: str) -> None:
+    """Retire a sampler and forget its live view (profile deleted, creds
+    forgotten). History on disk is of course kept."""
+    with _mon_lock:
+        mon = MONITORS.pop(profile, None)
+    if mon:
+        mon.stop_flag.set()
+        mon.drop()
+    with _state_lock:
+        STATE.pop(profile, None)
+
+
+def active_profile() -> str:
+    try:
+        return str(load_config().get("active", "") or "")
+    except Exception:
+        return ""
+
+
+def active_monitor() -> RouterMonitor | None:
+    with _mon_lock:
+        return MONITORS.get(active_profile())
+
+
+def connected_of(profile: str) -> bool:
+    with _state_lock:
+        s = STATE.get(profile)
+        return bool(s and s.get("connected"))
+
+
+def _desired_profiles(cfg: dict) -> set:
+    """Every saved profile with usable credentials gets a sampler, whether or
+    not it is the one on screen. A credential-only flat config (pre-profiles,
+    nothing migrated yet) polls as the unnamed profile ""."""
+    want = {n for n, p in (cfg.get("profiles") or {}).items() if p.get("user")}
+    if not want and cfg.get("user"):
+        want.add("")
+    return want
+
+
+class MonitorSupervisor(threading.Thread):
+    """Reconciles MONITORS with config.json: new profile -> sampler started,
+    deleted/blanked profile -> sampler retired. Profile endpoints call
+    start/stop directly so adds and switches are instant; this loop is the
+    safety net for anything else that edits config.json."""
+
+    def __init__(self):
+        super().__init__(daemon=True, name="monitor-supervisor")
+        self.stop_flag = threading.Event()
+
+    def run(self):
+        while not self.stop_flag.is_set():
+            try:
+                want = _desired_profiles(load_config())
+                with _mon_lock:
+                    have = set(MONITORS)
+                for name in have - want:
+                    stop_monitor(name)
+                for name in want - have:
+                    start_monitor(name)
+            except Exception as e:
+                log.warning("supervisor pass failed: %s", e)
+            self.stop_flag.wait(2)
 
 
 # --------------------------------------------------------------------------
@@ -1335,7 +1479,7 @@ def session_revoke(sid: str) -> None:
 # FastAPI app
 # --------------------------------------------------------------------------
 app = FastAPI(title="MikroTik LAN Monitor")
-monitor = RouterMonitor()
+supervisor = MonitorSupervisor()
 
 
 @app.middleware("http")
@@ -1407,7 +1551,13 @@ _ptr_busy: set = set()
 _ptr_lock = threading.Lock()
 _ptr_pool = None               # lazily created ThreadPoolExecutor
 DNS_TTL = 30.0
-_dns_rev = {"ts": 0.0, "map": {}, "lock": threading.Lock()}
+_dns_rev: dict[str, dict] = {}   # profile -> {"ts", "map"} — each router's own
+_dns_rev_lock = threading.Lock() # DNS cache, so names never cross networks
+
+
+def dns_rev_for(profile: str) -> dict:
+    with _dns_rev_lock:
+        return _dns_rev.setdefault(profile, {"ts": 0.0, "map": {}})
 
 
 def resolve_ptr(ip: str):
@@ -1447,18 +1597,17 @@ def _do_ptr(ip: str) -> None:
         _ptr_busy.discard(ip)
 
 
-def dns_names_for(ip: str) -> list:
+def dns_names_for(ip: str, profile: str | None = None) -> list:
     """P1 hint: names from the router's own DNS cache, inverted (address -> names).
 
-    The map is rebuilt by the sampler thread only — librouteros connections are
+    The map is rebuilt by the sampler threads only — librouteros connections are
     not thread-safe, so request handlers must never touch the API directly.
     """
-    with _dns_rev["lock"]:
-        m = _dns_rev["map"]
-        return list(m.get(ip, []))[:3]
+    rev = dns_rev_for(active_profile() if profile is None else profile)
+    return list(rev["map"].get(ip, []))[:3]
 
 
-def build_dns_rev(api) -> dict:
+def build_dns_rev(api, profile: str) -> dict:
     """Invert /ip/dns/cache into address -> [names]; called from the poll thread."""
     m = {}
     for r in api_fetch_all(api, "/ip/dns/cache") or []:
@@ -1469,14 +1618,16 @@ def build_dns_rev(api) -> dict:
                 m.setdefault(a, [])
                 if nm not in m[a]:
                     m[a].append(nm)
-    with _dns_rev["lock"]:
-        _dns_rev["map"] = m
-        _dns_rev["ts"] = time.time()
+    rev = dns_rev_for(profile)
+    with _dns_rev_lock:
+        rev["map"] = m
+        rev["ts"] = time.time()
     return m
 
 
-def dns_rev_age() -> float:
-    return round(time.time() - _dns_rev["ts"], 1)
+def dns_rev_age(profile: str | None = None) -> float:
+    rev = dns_rev_for(active_profile() if profile is None else profile)
+    return round(time.time() - rev["ts"], 1)
 
 
 def suffix_of(host: str) -> str:
@@ -1617,15 +1768,17 @@ def device_peers(conns, lan_nets, ip: str, limit: int = 25, self_ips=(),
 @app.get("/api/peers")
 def api_peers(ip: str, limit: int = 25):
     """Who this LAN device is talking to right now (conntrack), with name hints."""
-    conns = list(monitor.last_conns or [])
-    lan = [str(n) for n in (monitor.lan_nets or [])]
+    mon = active_monitor()
+    conns = list(mon.last_conns or []) if mon else []
+    lan = [str(n) for n in (mon.lan_nets or [])] if mon else []
+    st = state_for(active_profile())
     with _state_lock:
-        wan = STATE.get("wan") or {}
+        wan = st.get("wan") or {}
         self_ips = [wan.get("ip", ""), wan.get("gw", "")]
         # the device's NDP-known IPv6 addresses, so v6 conntrack rows attribute
         # to the same device the panel is showing (conntrack is per family)
         self_addrs: list = []
-        for d in STATE.get("devices", []):
+        for d in st.get("devices", []):
             if d.get("ip") == ip or ip in (d.get("ips") or []):
                 self_addrs = list(d.get("ipv6") or [])
                 break
@@ -1653,7 +1806,7 @@ def api_peers(ip: str, limit: int = 25):
     data["groups"] = sorted(groups.values(),
                             key=lambda g: -(g["rx_bps"] + g["tx_bps"]))[:6]
     data["names_pending"] = pending
-    data["updated"] = STATE.get("updated")
+    data["updated"] = st.get("updated")
     data["dns_cache_age"] = dns_rev_age()
     return data
 
@@ -1668,29 +1821,40 @@ def _startup():
             "at /data and be writable by the container user "
             "(docker inspect -f '{{json .Mounts}}' <container> to check)") from e
     threading.Thread(target=load_oui, daemon=True).start()
-    monitor.start()
+    supervisor.start()
 
 
 @app.get("/api/state")
 def api_state():
+    cfg = load_config()
+    name = str(cfg.get("active", "") or "")
+    st = state_for(name)
+    with _mon_lock:
+        sampled = list(MONITORS)
     with _state_lock:
-        return {
-            "connected": STATE["connected"],
-            "last_error": STATE["last_error"],
-            "stale": STATE["stale"],
-            "updated": STATE["updated"],
-            "system": STATE["system"],
-            "wan": STATE["wan"],
-            "devices": STATE["devices"],
-            "totals": STATE["totals"],
-            "nets": STATE["nets"],
-            "wifi": STATE.get("wifi", []),
-            "health": STATE.get("health", []),
-            "pools": STATE.get("pools", []),
-            "topo": STATE["topo"],
-            "topo_ports": STATE.get("topo_ports", {}),
-            "config": STATE["config"] or {"host": load_config()["host"]},
-        }
+        out = {k: st[k] for k in (
+            "connected", "last_error", "stale", "updated", "system", "wan",
+            "devices", "totals", "nets", "topo", "topo_ports", "config")}
+        out.update(wifi=st.get("wifi", []), health=st.get("health", []),
+                   pools=st.get("pools", []))
+        # every sampler at a glance: the dashboard shows one profile, but ALL
+        # saved ones collect — the UI can show that without guessing
+        out["monitors"] = [{"name": n, "connected": bool(STATE.get(n, {}).get("connected"))}
+                           for n in sampled]
+    prof = (cfg.get("profiles") or {}).get(name) or {}
+    if not out["config"]:
+        out["config"] = {"host": prof.get("host") or cfg.get("host", ""),
+                         "user": prof.get("user", ""), "profile": name}
+    with _mon_lock:
+        polled = name in MONITORS
+    if not out["connected"] and not polled:
+        # no sampler yet: either starting up (creds known, first poll pending)
+        # or nothing to connect to (fresh / forgotten setup)
+        has_creds = bool(prof.get("user")) or (not name and cfg.get("user"))
+        out["last_error"] = out["last_error"] or (
+            f"connecting to {out['config'].get('host', '')}…" if has_creds else
+            "router credentials not configured — open the dashboard and enter them")
+    return out
 
 
 @app.get("/api/history")
@@ -1794,15 +1958,17 @@ def api_analytics_conns(limit: int = 15):
     """Global 'top conversations' from the live conntrack snapshot: local device
     <-> remote peer, aggregated per 5-tuple-ish key. Byte totals are per live
     session (entries vanish when a connection expires), not historical."""
-    conns = list(monitor.last_conns or [])
-    nets = [ipaddress.ip_network(n) for n in (monitor.lan_nets or [])]
+    mon = active_monitor()
+    conns = list(mon.last_conns or []) if mon else []
+    nets = [ipaddress.ip_network(n) for n in (mon.lan_nets or [])] if mon else []
+    st = state_for(active_profile())
     with _state_lock:
-        wan_ip = (STATE.get("wan") or {}).get("ip", "")
-        gw_ip = (STATE.get("wan") or {}).get("gw", "")
+        wan_ip = (st.get("wan") or {}).get("ip", "")
+        gw_ip = (st.get("wan") or {}).get("gw", "")
         # name lookup keyed by every address a device is known under —
         # v4 primary/extra IPs and NDP-observed IPv6 addresses alike
         hosts: dict = {}
-        for d in STATE.get("devices", []):
+        for d in st.get("devices", []):
             nm = d.get("hostname") or d.get("vendor") or ""
             for a in [d.get("ip"), *(d.get("ips") or []), *(d.get("ipv6") or [])]:
                 if a:
@@ -1871,21 +2037,14 @@ def api_analytics_conns(limit: int = 15):
         names = dns_names_for(e["remote"])
         ptr, _fresh = resolve_ptr(e["remote"])
         e["remote_name"] = (names[0] if names else "") or ptr or ""
-    return {"updated": STATE.get("updated"), "flows": total_flows,
+    return {"updated": st.get("updated"), "flows": total_flows,
             "conversations": rows}
 
 
 # --- router profiles (switch routers/accounts from the browser) ------------
-
-def _clear_display(msg: str) -> None:
-    """Drop every cached view so a different router never shows the previous
-    router's board/devices/map while connecting or after a failed connect."""
-    with _state_lock:
-        STATE.update({"connected": False, "last_error": msg, "updated": 0.0,
-                      "system": {}, "wan": {}, "devices": [], "totals": {},
-                      "nets": {}, "topo": {}, "topo_ports": {}, "wifi": [],
-                      "health": [], "pools": []})
-
+# Every saved profile runs its own sampler continuously, so "switch" is a
+# pure display change: the newly picked profile is already connected and
+# already has a live view + history — no reconnect, no blanking.
 
 def _sync_profiles(cfg: dict) -> dict:
     """Migrate a flat-only config (pre-profiles) into one profile named by
@@ -1900,11 +2059,14 @@ def _sync_profiles(cfg: dict) -> dict:
 
 @app.get("/api/profiles")
 def api_profiles_list():
-    """Saved router profiles — host/user only, passwords never leave here."""
+    """Saved router profiles — host/user only, passwords never leave here.
+    `connected` reflects each profile's own sampler: inactive profiles report
+    it too, because they are polled continuously in the background."""
     cfg = _sync_profiles(load_config())
     save_config(cfg)  # persist any migration
     return {"profiles": [{"name": n, "host": p.get("host", ""),
-                          "user": p.get("user", "")}
+                          "user": p.get("user", ""),
+                          "connected": connected_of(n)}
                          for n, p in cfg.get("profiles", {}).items()],
             "active": cfg.get("active", "")}
 
@@ -1925,8 +2087,7 @@ async def api_profiles_use(request: Request):
             cfg[k] = prof[k]
     cfg["active"] = name
     save_config(cfg)  # save_config chmods 600; never log secrets
-    monitor.reset()  # next cycle reconnects to the selected router
-    _clear_display(f"connecting to {prof.get('host', '')}…")
+    start_monitor(name)  # in case it was not sampled yet; usually a no-op
     return {"ok": True, "active": name}
 
 
@@ -1944,11 +2105,8 @@ async def api_profiles_delete(request: Request):
     cfg["active"] = ""
     if was_active:  # active creds go with it: dashboard returns to setup state
         cfg["host"], cfg["user"], cfg["password"] = DEFAULT_CONFIG["host"], "", ""
-        monitor.reset()
-        with _state_lock:
-            STATE["config"] = {}  # else the dialog keeps pre-filling the old router
-        _clear_display("router credentials not configured")
     save_config(cfg)  # save_config chmods 600; never log secrets
+    stop_monitor(name)
     return {"ok": True}
 
 
@@ -1956,8 +2114,6 @@ async def api_profiles_delete(request: Request):
 async def api_config(request: Request):
     body = await request.json()
     cfg = load_config()
-    changed_conn = ("host" in body and body["host"] != cfg.get("host")) or \
-                   ("user" in body and body["user"] != cfg.get("user"))
     for k in ("host", "user", "password", "allow_control", "interval_seconds"):
         if k in body:
             cfg[k] = body[k]
@@ -1967,9 +2123,10 @@ async def api_config(request: Request):
     cfg.setdefault("profiles", {})[name] = {k: cfg.get(k) for k in _PROFILE_KEYS}
     cfg["active"] = name
     save_config(cfg)  # save_config chmods 600; never log secrets
-    monitor.reset()  # reconnect with the new credentials on next cycle
-    if changed_conn:
-        _clear_display("connecting to the new router…")
+    # A changed host/user/password under an existing profile name is picked up
+    # by that sampler itself (creds diff -> reconnect); a NEW name gets its
+    # sampler right away instead of waiting for the supervisor pass.
+    start_monitor(name)
     return {"ok": True}
 
 
@@ -1980,16 +2137,14 @@ async def api_config_forget():
     credentials are forgotten: the dashboard login and the history DB stay;
     the UI falls back to the Enter-credentials form on the next poll."""
     cfg = _sync_profiles(load_config())
+    gone = set(cfg.get("profiles", {})) | {cfg.get("active", "")}
     if cfg.get("active"):
         cfg.get("profiles", {}).pop(cfg["active"], None)
     cfg["active"] = ""
     cfg["host"], cfg["user"], cfg["password"] = DEFAULT_CONFIG["host"], "", ""
     save_config(cfg)  # drops the active profile; save_config chmods 600
-    monitor.reset()
-    with _state_lock:
-        STATE["config"] = {}
-    _clear_display("router credentials not configured — "
-                   "open the dashboard and enter them")
+    for name in gone:  # every sampler loses its credentials -> retire them
+        stop_monitor(name)
     log.info("router credentials forgotten via web UI")
     return {"ok": True}
 
@@ -2005,8 +2160,11 @@ async def api_control(req: Request):
     if not ip:
         return JSONResponse({"ok": False, "error": "ip required"}, 400)
     try:
-        monitor.ensure()
-        api = monitor.api
+        mon = active_monitor()
+        if mon is None:
+            return JSONResponse({"ok": False, "error": "no active router — switch to a profile first"}, 409)
+        mon.ensure()
+        api = mon.api
         lst = cfg.get("block_list_name", "DASH_BLOCKED")
         if action == "block":
             # ensure the drop rule exists once, at the very top
