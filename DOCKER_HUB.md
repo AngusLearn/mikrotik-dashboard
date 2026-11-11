@@ -41,7 +41,8 @@ docker run -d --name mikrotik-dashboard \
 
 ## Tags
 
-- `latest` — current `main` branch
+- `latest` / `main` — current `main` branch
 - `<full-commit-sha>` — pinned to a commit
+- `v1.0.0` and later `vX.Y.Z` — tagged releases (GitHub Releases list the matching image)
 
 Source, docs and issues: [github.com/AngusLearn/mikrotik-dashboard](https://github.com/AngusLearn/mikrotik-dashboard)
