@@ -37,7 +37,10 @@ cfg = {k: v for k, v in cfg.items() if k not in ("profiles", "active")}
 (tmp / "config.json").write_text(json.dumps(cfg))
 (tmp / "config.json").chmod(0o600)
 HOST_A = cfg["host"]
-HOST_B = "192.0.2.1" if HOST_A != "192.0.2.1" else "192.0.2.30"
+# second router: DASH_TEST_HOST_B override, else by convention the ".30"/".1"
+# partner inside the active host's /24 — no LAN addresses baked into the repo
+HOST_B = os.environ.get("DASH_TEST_HOST_B") or \
+    HOST_A.rsplit(".", 1)[0] + (".30" if HOST_A.endswith(".1") else ".1")
 BOARD_A, BOARD_B = board_of(HOST_A, cfg), board_of(HOST_B, cfg)
 assert BOARD_A and BOARD_B and BOARD_A != BOARD_B, "need two distinct routers"
 

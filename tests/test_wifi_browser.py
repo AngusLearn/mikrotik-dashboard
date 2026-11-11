@@ -1,5 +1,6 @@
-# End-to-end wireless/AP view test (Batch #35): monitors the hAP ac (192.0.2.30)
-# on a temp DASH_BASE instance and proves WiFi stations are shown with their
+# End-to-end wireless/AP view test (Batch #35): monitors the WiFi AP router
+# (host from DASH_TEST_HOST_B, else the config host's /24 + ".30") on a temp
+# DASH_BASE instance and proves WiFi stations are shown with their
 # SSID / band / chipset / signal in header, device table, network map and panel.
 # run: <playwright-python> tests/test_wifi_browser.py
 import json, os, subprocess, sys, tempfile, time, urllib.request, urllib.error
@@ -11,7 +12,9 @@ PORT = int(os.environ.get("WIFI_TEST_PORT", "8894"))
 URL = f"http://127.0.0.1:{PORT}"
 EXE = os.environ.get("CHROME", "/home/angus/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome")
 PW = "test-pass-1234"
-AP = "192.0.2.30"
+_CFG_HOST = json.loads((REPO / "config.json").read_text()).get("host", "192.0.2.1")
+AP = os.environ.get("DASH_TEST_HOST_B") or _CFG_HOST.rsplit(".", 1)[0] + ".30"
+AP_NET = AP.rsplit(".", 1)[0] + "."   # the /24 the stations live in
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 fails = []
@@ -80,8 +83,8 @@ try:
                                       for a in assoc),
               json.dumps(assoc[0].get("wlan"), default=str)[:140] if assoc else "none")
         check("stations identified by registration-table last-ip (WinBox Quick Set source)",
-              len(assoc) >= 1 and all(a["wlan"].get("ip", "").startswith("192.168.1.")
-                                      and a["ip"].startswith("192.168.1.") for a in assoc),
+              len(assoc) >= 1 and all(a["wlan"].get("ip", "").startswith(AP_NET)
+                                      and a["ip"].startswith(AP_NET) for a in assoc),
               json.dumps([(a["ip"], a["wlan"].get("ip"), a["wlan"].get("ccq"))
                           for a in assoc])[:160])
         check("header shows the WiFi summary",
