@@ -31,3 +31,17 @@ jobs:
             anguslearn/mikrotik-dashboard:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Update Docker Hub overview page
+        # Cosmetic only: needs a token with repo-edit ("Read, Write & Delete") scope.
+        # Never block image publishing if it fails.
+        continue-on-error: true
+        uses: christian-korneck/update-container-description-action@v1
+        env:
+          DOCKER_USER: anguslearn
+          DOCKER_PASS: '${{ secrets.DOCKER_PUSH }}'
+        with:
+          destination_container_repo: anguslearn/mikrotik-dashboard
+          provider: dockerhub
+          short_description: "Self-hosted live traffic dashboard for MikroTik RouterOS — per-device charts, network map"
+          readme_file: DOCKER_HUB.md
